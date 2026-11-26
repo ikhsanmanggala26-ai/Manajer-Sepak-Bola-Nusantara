@@ -846,7 +846,7 @@
                 </div>
 
                 <!-- Player PvP Profile Stats -->
-                <div class="grid grid-cols-2 sm:grid-cols-4 gap-2.5 text-xs">
+                <div class="grid grid-cols-2 sm:grid-cols-5 gap-2.5 text-xs">
                     <div class="bg-slate-950/80 border border-slate-800 p-3 rounded-xl">
                         <div class="text-slate-400 text-[10px] uppercase font-bold">Rating PvP</div>
                         <div id="pvpMyRating" class="font-outfit font-black text-xl text-amber-400">1000</div>
@@ -858,6 +858,10 @@
                     <div class="bg-slate-950/80 border border-slate-800 p-3 rounded-xl">
                         <div class="text-slate-400 text-[10px] uppercase font-bold">Rekor (M - S - K)</div>
                         <div id="pvpMyRecord" class="font-outfit font-black text-lg text-white">0 - 0 - 0</div>
+                    </div>
+                    <div class="bg-slate-950/80 border border-slate-800 p-3 rounded-xl">
+                        <div class="text-slate-400 text-[10px] uppercase font-bold">Kuota Hadiah Harian</div>
+                        <div id="pvpDailyQuota" class="font-outfit font-black text-xl text-emerald-400">5 / 5</div>
                     </div>
                     <div class="bg-slate-950/80 border border-slate-800 p-3 rounded-xl">
                         <div class="text-slate-400 text-[10px] uppercase font-bold">Pemain Online</div>
@@ -1278,16 +1282,23 @@
             },
             showRewarded(onReward) {
                 if (this.adBusy) return;
+                const inIframe = (window.parent && window.parent !== window);
+                if (!inIframe) {
+                    showToast('Iklan reward hanya tersedia saat dimainkan melalui Portal Game.', 'warning');
+                    return;
+                }
                 this.adBusy = true;
                 this.pendingRewardCb = onReward;
-                const inIframe = (window.parent && window.parent !== window);
                 try {
-                    if (inIframe) {
-                        window.parent.postMessage({ source: 'GARUDA_MANAGER_GAME', type: 'SHOW_REWARDED_AD' }, '*');
-                    }
+                    window.parent.postMessage({ source: 'GARUDA_MANAGER_GAME', type: 'SHOW_REWARDED_AD' }, '*');
                 } catch (e) {}
-                // Safe fallback if played standalone or portal does not send PORTAL_REWARD_GRANTED
-                this.rewardFallbackTimer = setTimeout(() => this._completeReward(), inIframe ? 1200 : 400);
+                // Timeout reset status tanpa mencairkan hadiah jika portal tidak membalas PORTAL_REWARD_GRANTED
+                this.rewardFallbackTimer = setTimeout(() => {
+                    this.rewardFallbackTimer = null;
+                    this.pendingRewardCb = null;
+                    this.adBusy = false;
+                    showToast('Iklan tidak tersedia saat ini. Coba lagi nanti.', 'warning');
+                }, 8000);
             }
         };
 
@@ -2311,6 +2322,11 @@
             initMatchSimulation(opp, `PIALA NUSANTARA • ${rNames[gameState.cup.round] || 'FINAL'}`);
         }
         function startNewMatch() {
+            if (matchState.mode === 'pvp') {
+                switchTab('pvp');
+                showToast('Pilih lawan lain di Arena PvP untuk bertanding.', 'info');
+                return;
+            }
             if (matchState.mode === 'cup' && gameState.cup.status === 'active') startCupMatch();
             else if (matchState.mode === 'tournament' && matchState.tournamentId) {
                 selectedTournamentId = matchState.tournamentId;
@@ -3469,13 +3485,13 @@
         window.switchTab = switchTab;
 
         function updateUIHeader() {
-            document.getElementById('headerClubEmblem').innerHTML = getCartoonEmblemSVG(gameState.club.emblem, gameState.club.primaryColor, gameState.club.secondaryColor, 'w-9 h-9', gameState.club.customEmblem);
+            document.getElementById('headerClubEmblem').innerHTML = getCartoonEmblemSVG(gameState.club.emblem, gameState.club.primaryColor, gameState.club.secondaryColor, 'w-10 h-10', gameState.club.customEmblem);
             document.getElementById('headerClubName').innerText = gameState.club.name;
             document.getElementById('headerLeagueBadge').innerText = gameState.club.league;
             document.getElementById('headerManagerName').innerText = gameState.manager.name;
             document.getElementById('headerWeek').innerText = gameState.season.week;
             document.getElementById('headerLevel').innerText = gameState.manager.level;
-            document.getElementById('headerBudget').innerText = `Rp ${gameState.manager.budget.toFixed(1)} M`;
+            document.getElementById('headerBudget').innerText = `Rp ${Number(gameState.manager.budget).toFixed(1)} M`;
             document.getElementById('headerTokens').innerText = `${gameState.manager.tokens} T`;
             document.getElementById('headerRest').innerText = gameState.manager.restPacks;
             document.getElementById('headerMed').innerText = gameState.manager.medKits;
@@ -3483,32 +3499,37 @@
 
         function renderDashboard() {
             const opp = getNextLeagueOpponent();
+            const avgOvr = getTeamAverageOVR();
+            const starters = gameState.squad.filter(p => p.starter);
+            const avgStam = starters.length ? Math.round(starters.reduce((s, p) => s + p.stamina, 0) / starters.length) : 95;
+            const unavail = gameState.squad.filter(p => p.injuredWeeks > 0 || p.suspendedWeeks > 0).length;
+
             document.getElementById('dashNextMatchComp').innerText = `${gameState.club.league} • PEKAN ${gameState.season.week}`;
             document.getElementById('dashStadiumInfo').innerHTML = `<i class="fa-solid fa-location-dot text-amber-400 mr-1"></i>${escapeHTML(gameState.club.stadium)}`;
             document.getElementById('dashHomeEmblem').innerHTML = getCartoonEmblemSVG(gameState.club.emblem, gameState.club.primaryColor, gameState.club.secondaryColor, 'w-16 h-16', gameState.club.customEmblem);
             document.getElementById('dashHomeName').innerText = gameState.club.name;
             document.getElementById('dashHomeCoach').innerText = `Pelatih: ${gameState.manager.name}`;
-            document.getElementById('dashHomeOvr').innerText = `OVR ${getTeamAverageOVR()}`;
+            document.getElementById('dashHomeOvr').innerText = `OVR ${avgOvr}`;
 
             document.getElementById('dashAwayEmblem').innerHTML = getCartoonEmblemSVG(opp.emblem, opp.primaryColor, opp.secondaryColor, 'w-16 h-16');
             document.getElementById('dashAwayName').innerText = opp.name;
             document.getElementById('dashAwayCoach').innerText = `Pelatih: ${opp.coach || 'Pelatih AI'}`;
-            document.getElementById('dashAwayOvr').innerText = `OVR ${opp.ovr || 90}`;
+            document.getElementById('dashAwayOvr').innerText = `OVR ${opp.ovr || 92}`;
 
-            const starters = gameState.squad.filter(p => p.starter);
-            const avgStam = starters.length ? Math.round(starters.reduce((s, p) => s + p.stamina, 0) / starters.length) : 95;
-            const unavail = gameState.squad.filter(p => p.injuredWeeks > 0 || p.suspendedWeeks > 0).length;
-            document.getElementById('dashAvgOvr').innerText = getTeamAverageOVR();
-            document.getElementById('dashAvgStamina').innerText = avgStam + '%';
+            document.getElementById('dashAvgOvr').innerText = avgOvr;
+            document.getElementById('dashAvgStamina').innerText = `${avgStam}%`;
             document.getElementById('dashUnavailableCount').innerText = unavail;
-            document.getElementById('dashTotalFines').innerText = `Rp ${(gameState.manager.totalFines || 0).toFixed(1)} M`;
+            document.getElementById('dashTotalFines').innerText = `Rp ${Number(gameState.manager.totalFines || 0).toFixed(1)} M`;
 
-            const sorted = [...getActiveLeagueTable()].sort((a, b) => b.pts - a.pts || (b.gf - b.ga) - (a.gf - a.ga));
-            const rank = sorted.findIndex(t => t.main) + 1;
-            document.getElementById('dashRank').innerText = `#${rank || 1}`;
-
-            document.getElementById('dashNewsList').innerHTML = gameState.news.slice(0, 6).map(n => `<li class="flex items-start gap-2"><span class="text-emerald-400">•</span><span>${escapeHTML(n)}</span></li>`).join('');
+            const tbl = [...getActiveLeagueTable()].sort((a, b) => (b.pts - a.pts) || ((b.gf - b.ga) - (a.gf - a.ga)));
+            const rankIdx = tbl.findIndex(t => t.main);
+            document.getElementById('dashRank').innerText = rankIdx >= 0 ? `#${rankIdx + 1}` : '#1';
             syncTacticsUI();
+
+            const newsEl = document.getElementById('dashNewsList');
+            if (newsEl) {
+                newsEl.innerHTML = gameState.news.slice(0, 6).map(n => `<li class="flex items-start gap-2"><i class="fa-solid fa-circle-dot text-emerald-400 mt-1 text-[8px]"></i><span>${escapeHTML(n)}</span></li>`).join('');
+            }
         }
 
         function claimPortalRewardAd() {
@@ -3517,574 +3538,464 @@
                 gameState.manager.restPacks += 2;
                 updateUIHeader();
                 saveGameData(false);
-                showToast('Bonus Iklan Portal diterima: +3 Token & +2 Paket Istirahat!', 'success');
+                showToast('Bonus Portal Diterima: +3 Token & +2 Paket Istirahat!', 'success');
             });
         }
         window.claimPortalRewardAd = claimPortalRewardAd;
 
         function renderSquadTab() {
+            syncTacticsUI();
             const tbody = document.getElementById('squadTableBody');
             if (!tbody) return;
-            const sorted = [...gameState.squad].sort((a, b) => Number(b.starter) - Number(a.starter) || b.ovr - a.ovr);
-            tbody.innerHTML = sorted.map(p => {
-                const status = p.injuredWeeks > 0
-                    ? `<span class="text-rose-400 font-bold">Cedera (${p.injuredWeeks}p)</span>`
-                    : (p.suspendedWeeks > 0 ? `<span class="text-amber-400 font-bold">Skorsing (${p.suspendedWeeks}p)</span>`
-                    : (p.starter ? '<span class="text-emerald-400 font-black">INTI XI</span>' : '<span class="text-slate-400">Cadangan</span>'));
+            tbody.innerHTML = gameState.squad.map(p => {
+                const isUnavail = p.injuredWeeks > 0 || p.suspendedWeeks > 0;
+                const statusBadge = p.injuredWeeks > 0
+                    ? `<span class="px-2 py-0.5 rounded bg-rose-500/20 text-rose-300 font-bold">Cedera (${p.injuredWeeks}p)</span>`
+                    : (p.suspendedWeeks > 0
+                        ? `<span class="px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 font-bold">Skors (${p.suspendedWeeks}p)</span>`
+                        : (p.starter
+                            ? `<span class="px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-bold">Starter XI</span>`
+                            : `<span class="px-2 py-0.5 rounded bg-slate-800 text-slate-400">Cadangan</span>`));
+
                 return `
-                    <tr class="hover:bg-slate-900/70">
-                        <td class="py-2.5 px-2 font-mono text-slate-400">#${p.num}</td>
+                    <tr class="hover:bg-slate-900/60">
+                        <td class="py-2.5 px-2 font-mono font-bold text-slate-400">${p.num}</td>
                         <td class="py-2.5 px-2 font-bold text-white">${escapeHTML(p.name)}</td>
                         <td class="py-2.5 px-2"><span class="px-2 py-0.5 rounded bg-slate-800 text-cyan-300 font-bold">${p.pos}</span></td>
-                        <td class="py-2.5 px-2 font-black text-amber-400">${p.ovr}</td>
-                        <td class="py-2.5 px-2">${Math.round(p.stamina)}%</td>
-                        <td class="py-2.5 px-2">${status}</td>
+                        <td class="py-2.5 px-2 font-black text-emerald-400">${p.ovr}</td>
+                        <td class="py-2.5 px-2 font-bold ${p.stamina < 65 ? 'text-rose-400' : 'text-slate-200'}">${Math.round(p.stamina)}%</td>
+                        <td class="py-2.5 px-2">${statusBadge}</td>
                         <td class="py-2.5 px-2 text-right space-x-1">
-                            <button onclick="togglePlayerStarter('${p.id}')" class="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-white font-bold">${p.starter ? 'Cadangkan' : 'Mainkan'}</button>
-                            <button onclick="boostPlayerStamina('${p.id}')" class="px-2 py-1 rounded-lg bg-cyan-500/20 text-cyan-300 font-bold" title="Pulihkan Stamina"><i class="fa-solid fa-bolt"></i></button>
-                            ${p.injuredWeeks > 0 ? `<button onclick="healPlayer('${p.id}')" class="px-2 py-1 rounded-lg bg-rose-500/20 text-rose-300 font-bold" title="Sembuhkan"><i class="fa-solid fa-kit-medical"></i></button>` : ''}
+                            ${p.injuredWeeks > 0 ? `<button onclick="healPlayer('${p.id}')" class="px-2 py-1 rounded bg-rose-500 text-white font-bold text-[10px]">Obati (1 Med)</button>` : ''}
+                            ${p.stamina < 92 ? `<button onclick="restPlayer('${p.id}')" class="px-2 py-1 rounded bg-cyan-500 text-slate-950 font-bold text-[10px]">+Stamina</button>` : ''}
+                            ${!isUnavail ? `<button onclick="toggleStarter('${p.id}')" class="px-2 py-1 rounded ${p.starter ? 'bg-slate-800 text-slate-300' : 'bg-emerald-500 text-slate-950 font-black'} text-[10px]">${p.starter ? 'Cadangkan' : 'Mainkan'}</button>` : ''}
                         </td>
                     </tr>`;
             }).join('');
         }
 
-        function togglePlayerStarter(id) {
-            const p = gameState.squad.find(x => x.id === id);
+        function toggleStarter(pid) {
+            const p = gameState.squad.find(x => String(x.id) === String(pid));
             if (!p) return;
-            if (!p.starter && gameState.squad.filter(x => x.starter).length >= 11) {
-                showToast('Starting XI sudah 11 pemain! Cadangkan 1 pemain dulu.', 'warning');
-                return;
+            if (!p.starter) {
+                const starters = gameState.squad.filter(x => x.starter);
+                if (starters.length >= 11) { showToast('Sudah ada 11 pemain Starter. Cadangkan 1 pemain dulu.', 'warning'); return; }
+                p.starter = true;
+            } else {
+                p.starter = false;
             }
-            p.starter = !p.starter;
-            renderSquadTab(); renderDashboard(); saveGameData(false);
+            renderSquadTab();
+            renderDashboard();
+            saveGameData(false);
         }
-        function autoPickBestXI() {
-            const avail = [...gameState.squad].sort((a, b) => ((a.injuredWeeks + a.suspendedWeeks) - (b.injuredWeeks + b.suspendedWeeks)) || (b.ovr - a.ovr));
-            avail.forEach((p, idx) => p.starter = idx < 11);
-            renderSquadTab(); renderDashboard(); saveGameData(false);
-            showToast('Best XI otomatis dipilih!', 'success');
-        }
-        function boostPlayerStamina(id) {
-            if (gameState.manager.restPacks <= 0) { showToast('Paket Istirahat habis!', 'warning'); return; }
-            const p = gameState.squad.find(x => x.id === id);
-            if (!p) return;
-            gameState.manager.restPacks--;
-            p.stamina = 100;
-            updateUIHeader(); renderSquadTab(); saveGameData(false);
-        }
-        function healPlayer(id) {
+        function healPlayer(pid) {
             if (gameState.manager.medKits <= 0) { showToast('Paket Medis habis!', 'warning'); return; }
-            const p = gameState.squad.find(x => x.id === id);
+            const p = gameState.squad.find(x => String(x.id) === String(pid));
             if (!p) return;
             gameState.manager.medKits--;
             p.injuredWeeks = 0;
-            updateUIHeader(); renderSquadTab(); saveGameData(false);
+            updateUIHeader(); renderSquadTab(); renderDashboard(); saveGameData(false);
             showToast(`${p.name} pulih dari cedera!`, 'success');
         }
-        window.togglePlayerStarter = togglePlayerStarter;
-        window.autoPickBestXI = autoPickBestXI;
-        window.boostPlayerStamina = boostPlayerStamina;
+        function restPlayer(pid) {
+            if (gameState.manager.restPacks <= 0) { showToast('Paket Istirahat habis!', 'warning'); return; }
+            const p = gameState.squad.find(x => String(x.id) === String(pid));
+            if (!p) return;
+            gameState.manager.restPacks--;
+            p.stamina = Math.min(100, p.stamina + 25);
+            updateUIHeader(); renderSquadTab(); renderDashboard(); saveGameData(false);
+            showToast(`Stamina ${p.name} pulih +25%!`, 'success');
+        }
+        function autoPickBestXI() {
+            gameState.squad.forEach(p => p.starter = false);
+            const avail = gameState.squad.filter(p => p.injuredWeeks === 0 && p.suspendedWeeks === 0).sort((a, b) => b.ovr - a.ovr);
+            const gk = avail.find(p => p.pos === 'GK');
+            if (gk) gk.starter = true;
+            avail.filter(p => !p.starter).slice(0, 10).forEach(p => p.starter = true);
+            renderSquadTab(); renderDashboard(); saveGameData(false);
+            showToast('11 Pemain Terbaik otomatis dipilih!', 'success');
+        }
+        window.toggleStarter = toggleStarter;
         window.healPlayer = healPlayer;
+        window.restPlayer = restPlayer;
+        window.autoPickBestXI = autoPickBestXI;
 
-        // Standings & Sub-tabs
-        let activeStandingsSubTab = 'divisions';
-        let selectedStandingsDivision = 'LIGA SUPER';
+        /* Standings & Sub-tabs */
+        let activeStandingsDivision = 'LIGA SUPER';
 
         function switchStandingsSubTab(sub) {
-            activeStandingsSubTab = sub;
             ['divisions', 'cup', 'tournaments'].forEach(k => {
-                document.getElementById('standingsPanel-' + k)?.classList.toggle('hidden', k !== sub);
+                const panel = document.getElementById('standingsPanel-' + k);
                 const btn = document.getElementById('subTabBtn-' + k);
-                if (btn) btn.className = k === sub
-                    ? 'px-4 py-2 rounded-xl bg-emerald-500 text-slate-950 font-black transition'
-                    : 'px-4 py-2 rounded-xl bg-slate-800 text-slate-300 hover:bg-slate-700 transition';
+                if (panel) panel.classList.toggle('hidden', k !== sub);
+                if (btn) {
+                    btn.className = k === sub
+                        ? 'px-4 py-2 rounded-xl bg-emerald-500 text-slate-950 font-black transition'
+                        : 'px-4 py-2 rounded-xl bg-slate-800 text-slate-300 hover:bg-slate-700 transition';
+                }
             });
-            renderStandingsTab();
-        }
-        function selectStandingsDivision(div) {
-            selectedStandingsDivision = div;
-            renderStandingsTab();
+            if (sub === 'tournaments') renderTournamentsPanel();
+            else renderStandingsTab();
         }
         window.switchStandingsSubTab = switchStandingsSubTab;
-        window.selectStandingsDivision = selectStandingsDivision;
 
-        function renderStandingsTab() {
-            ensureAllDivisionsState(false);
+        function selectStandingsDivision(divName) {
+            activeStandingsDivision = divName;
             document.querySelectorAll('.div-tab-btn').forEach(b => {
-                const active = b.dataset.div === selectedStandingsDivision;
+                const active = b.dataset.div === divName;
                 b.className = active
                     ? 'div-tab-btn px-3.5 py-2 rounded-xl bg-amber-500 text-slate-950 font-black'
                     : 'div-tab-btn px-3.5 py-2 rounded-xl bg-slate-800 text-slate-300';
             });
-            document.getElementById('standingsDivTitle').innerText = `Klasemen ${selectedStandingsDivision} 2026–2027`;
-            const tbl = [...(gameState.allDivisions[selectedStandingsDivision] || [])].sort((a, b) => b.pts - a.pts || (b.gf - b.ga) - (a.gf - a.ga));
-            document.getElementById('standingsTableBody').innerHTML = tbl.map((t, idx) => `
-                <tr class="${t.main ? 'bg-emerald-950/50 text-emerald-200 font-bold' : 'hover:bg-slate-900/60'}">
-                    <td class="py-2 px-2 font-mono">${idx + 1}</td>
-                    <td class="py-2 px-2 flex items-center gap-2">
-                        ${getCartoonEmblemSVG(t.emblem, t.primaryColor, t.secondaryColor, 'w-6 h-6', t.main ? gameState.club.customEmblem : null)}
-                        <span>${escapeHTML(t.name)}</span>
-                    </td>
-                    <td class="py-2 px-2 text-slate-400">${escapeHTML(t.coach || '-')}</td>
-                    <td class="py-2 px-2 text-center">${t.p}</td>
-                    <td class="py-2 px-2 text-center">${t.w}</td>
-                    <td class="py-2 px-2 text-center">${t.d}</td>
-                    <td class="py-2 px-2 text-center">${t.l}</td>
-                    <td class="py-2 px-2 text-center">${t.gf - t.ga}</td>
-                    <td class="py-2 px-2 text-center font-black text-amber-400">${t.pts}</td>
-                </tr>
-            `).join('');
+            renderStandingsTab();
+        }
+        window.selectStandingsDivision = selectStandingsDivision;
 
-            // Weekly fixtures preview
-            const fxGrid = document.getElementById('weeklyFixturesGrid');
-            if (fxGrid) {
-                const pairs = [];
-                for (let i = 0; i < tbl.length - 1; i += 2) pairs.push([tbl[i], tbl[i + 1]]);
-                fxGrid.innerHTML = pairs.map(([h, a]) => `
-                    <div class="p-2.5 rounded-xl bg-slate-900 border border-slate-800 flex items-center justify-between gap-2">
-                        <span class="truncate flex-1 font-semibold">${escapeHTML(h.name)}</span>
-                        <span class="text-[10px] text-amber-400 font-black">VS</span>
-                        <span class="truncate flex-1 text-right font-semibold">${escapeHTML(a.name)}</span>
-                    </div>
-                `).join('');
+        function renderStandingsTab() {
+            ensureAllDivisionsState(false);
+            const tbl = [...(gameState.allDivisions[activeStandingsDivision] || [])]
+                .sort((a, b) => (b.pts - a.pts) || ((b.gf - b.ga) - (a.gf - a.ga)) || (b.gf - a.gf));
+
+            const title = document.getElementById('standingsDivTitle');
+            if (title) title.innerText = `Klasemen ${activeStandingsDivision} 2026–2027 (${tbl.length} Klub)`;
+
+            const tbody = document.getElementById('standingsTableBody');
+            if (tbody) {
+                tbody.innerHTML = tbl.map((t, idx) => {
+                    const gd = t.gf - t.ga;
+                    const rankColor = idx < 3 ? 'text-emerald-400 font-black' : (idx >= tbl.length - 3 ? 'text-rose-400 font-bold' : 'text-slate-400');
+                    return `
+                        <tr class="${t.main ? 'bg-emerald-950/40 font-bold text-white' : 'hover:bg-slate-900/60'}">
+                            <td class="py-2.5 px-2 ${rankColor}">${idx + 1}</td>
+                            <td class="py-2.5 px-2 flex items-center gap-2">
+                                ${getCartoonEmblemSVG(t.emblem, t.primaryColor, t.secondaryColor, 'w-6 h-6', t.main ? gameState.club.customEmblem : null)}
+                                <span>${escapeHTML(t.name)}</span>
+                                ${t.main ? '<span class="text-[9px] bg-emerald-500 text-slate-950 px-1.5 py-0.5 rounded font-black">ANDA</span>' : ''}
+                            </td>
+                            <td class="py-2.5 px-2 text-slate-400">${escapeHTML(t.coach || 'Pelatih AI')}</td>
+                            <td class="py-2.5 px-2 text-center">${t.p}</td>
+                            <td class="py-2.5 px-2 text-center text-emerald-400">${t.w}</td>
+                            <td class="py-2.5 px-2 text-center text-slate-300">${t.d}</td>
+                            <td class="py-2.5 px-2 text-center text-rose-400">${t.l}</td>
+                            <td class="py-2.5 px-2 text-center font-mono">${gd > 0 ? '+' + gd : gd}</td>
+                            <td class="py-2.5 px-2 text-center font-black text-amber-400">${t.pts}</td>
+                        </tr>`;
+                }).join('');
             }
 
-            // Piala Nusantara
-            const rNames = ['Perempat Final', 'Semifinal', 'Grand Final'];
+            // Weekly fixtures preview
+            const fixTitle = document.getElementById('weeklyFixturesTitle');
+            const fixGrid = document.getElementById('weeklyFixturesGrid');
+            if (fixTitle) fixTitle.innerText = `Jadwal Pekan ${gameState.season.week} • ${activeStandingsDivision}`;
+            if (fixGrid) {
+                const pairs = [];
+                for (let i = 0; i < tbl.length - 1; i += 2) pairs.push([tbl[i], tbl[i + 1]]);
+                fixGrid.innerHTML = pairs.map(([h, a]) => `
+                    <div class="bg-slate-900 border ${h.main || a.main ? 'border-emerald-500/50' : 'border-slate-800'} rounded-xl p-2.5 flex items-center justify-between gap-2">
+                        <span class="truncate font-semibold ${h.main ? 'text-emerald-300 font-black' : 'text-slate-200'}">${escapeHTML(h.name)}</span>
+                        <span class="text-[10px] font-black text-amber-400 px-1.5 py-0.5 bg-slate-950 rounded">VS</span>
+                        <span class="truncate font-semibold text-right ${a.main ? 'text-emerald-300 font-black' : 'text-slate-200'}">${escapeHTML(a.name)}</span>
+                    </div>`).join('');
+            }
+
+            // Cup Bracket
+            const cupGrid = document.getElementById('cupBracketGrid');
             const cupBtn = document.getElementById('btnPlayCupMatch');
-            const cupDesc = document.getElementById('cupStatusDesc');
             if (cupBtn) {
                 cupBtn.innerHTML = gameState.cup.status === 'active'
                     ? '<i class="fa-solid fa-play mr-1"></i> Mainkan Laga Piala'
-                    : '<i class="fa-solid fa-rotate-right mr-1"></i> Mulai Musim Piala Baru';
+                    : '<i class="fa-solid fa-rotate mr-1"></i> Mulai Musim Piala Baru';
             }
-            if (cupDesc) {
-                cupDesc.innerText = gameState.cup.status === 'won'
-                    ? `JUARA! ${gameState.club.name} berhasil memenangkan Piala Nusantara musim ini!`
-                    : (gameState.cup.status === 'eliminated'
-                        ? 'Langkah terhenti musim ini. Klik tombol di kanan untuk memulai musim Piala baru!'
-                        : 'Menangkan 3 babak gugur untuk membawa pulang trofi dan Rp 25 Miliar!');
+            if (cupGrid) {
+                const rNames = ['Perempat Final', 'Semifinal', 'Grand Final'];
+                cupGrid.innerHTML = rNames.map((rn, idx) => {
+                    const res = gameState.cup.results[idx];
+                    const opp = gameState.cup.opponents[idx] || 'Menunggu';
+                    const active = gameState.cup.status === 'active' && gameState.cup.round === idx;
+                    return `
+                        <div class="bg-slate-900 border ${active ? 'border-amber-400' : 'border-slate-800'} rounded-2xl p-4 space-y-2">
+                            <div class="font-outfit font-black text-amber-400">${rn}</div>
+                            <div class="text-white font-bold">${escapeHTML(gameState.club.name)} vs ${escapeHTML(opp)}</div>
+                            <div class="text-[11px] ${res ? 'text-emerald-400 font-bold' : 'text-slate-400'}">${res || (active ? 'Siap Dimainkan' : 'Belum Dimulai')}</div>
+                        </div>`;
+                }).join('');
             }
-            document.getElementById('cupBracketGrid').innerHTML = rNames.map((rn, idx) => `
-                <div class="p-3.5 rounded-xl border ${idx === gameState.cup.round && gameState.cup.status === 'active' ? 'border-amber-400 bg-amber-950/20' : 'border-slate-800 bg-slate-900/80'} space-y-1.5">
-                    <div class="text-[10px] font-black text-amber-400 uppercase">${rn}</div>
-                    <div class="font-bold text-white">${escapeHTML(gameState.club.name)} vs ${escapeHTML(gameState.cup.opponents[idx] || 'TBD')}</div>
-                    <div class="text-[11px] text-emerald-400">${gameState.cup.results[idx] || (idx === gameState.cup.round && gameState.cup.status === 'active' ? 'Siap Dimainkan' : 'Menunggu')}</div>
-                </div>
-            `).join('');
-
-            // 9 Tournaments
-            renderTournamentsPanel();
         }
 
-        // Transfers, Training, Facilities
-        function generateTransferMarket() {
-            const names = ['Marselino','Ragnar','Thom Haye','Jay Idzes','Calvin Verdonk','Rafael Struick','Pratama Arhan','Asnawi','Witan Sulaeman','Ramadhan Sananta','Hokky Caraka','Ivar Jenner'];
-            const poss = ['GK','DF','MF','FW'];
-            gameState.transferMarket = names.sort(() => Math.random() - 0.5).slice(0, 6).map((n, i) => ({
-                id: 'tr_' + Date.now() + '_' + i,
-                name: n,
-                num: 10 + i * 3,
-                pos: poss[i % 4],
-                ovr: 92 + Math.floor(Math.random() * 14),
-                price: Number((18 + Math.random() * 25).toFixed(1)),
-                tokens: 3 + Math.floor(Math.random() * 4)
+        /* Transfer Market */
+        const TRANSFER_POOL = [
+            { name: 'Marselino Ferdinan', pos: 'MF', ovr: 103, price: 28, tokens: 3 },
+            { name: 'Jay Idzes', pos: 'DF', ovr: 105, price: 34, tokens: 4 },
+            { name: 'Maarten Paes', pos: 'GK', ovr: 104, price: 32, tokens: 4 },
+            { name: 'Thom Haye', pos: 'MF', ovr: 104, price: 30, tokens: 3 },
+            { name: 'Ragnar Oratmangoen', pos: 'FW', ovr: 102, price: 26, tokens: 3 },
+            { name: 'Calvin Verdonk', pos: 'DF', ovr: 103, price: 29, tokens: 3 },
+            { name: 'Ole Romeny', pos: 'FW', ovr: 104, price: 33, tokens: 4 },
+            { name: 'Ramadhan Sananta', pos: 'FW', ovr: 98, price: 18, tokens: 2 },
+            { name: 'Beckham Putra', pos: 'MF', ovr: 97, price: 16, tokens: 2 },
+            { name: 'Yakob Sayuri', pos: 'FW', ovr: 99, price: 20, tokens: 2 },
+            { name: 'Sandy Walsh', pos: 'DF', ovr: 101, price: 24, tokens: 3 },
+            { name: 'Rafael Struick', pos: 'FW', ovr: 99, price: 21, tokens: 2 }
+        ];
+
+        function populateTransferMarket() {
+            gameState.transferMarket = [...TRANSFER_POOL].sort(() => Math.random() - 0.5).slice(0, 6).map((p, i) => ({
+                ...p, id: `tr_${Date.now()}_${i}`, num: 13 + i
             }));
         }
-        function renderTransferMarket() {
-            if (!gameState.transferMarket || gameState.transferMarket.length === 0) generateTransferMarket();
-            document.getElementById('transferMarketGrid').innerHTML = gameState.transferMarket.map(p => `
-                <div class="bg-slate-900 border border-slate-800 rounded-2xl p-4 space-y-2">
-                    <div class="flex justify-between items-center">
-                        <span class="font-outfit font-black text-sm text-white">${escapeHTML(p.name)}</span>
-                        <span class="px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 font-black">OVR ${p.ovr}</span>
-                    </div>
-                    <div class="text-slate-400">Posisi: <strong class="text-cyan-300">${p.pos}</strong> • Harga: <strong class="text-emerald-400">Rp ${p.price} M</strong> + ${p.tokens} T</div>
-                    <button onclick="buyTransferPlayer('${p.id}')" class="w-full py-2 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black rounded-xl">Rekrut Pemain</button>
-                </div>
-            `).join('');
+
+        function refreshTransferMarket() {
+            if (gameState.manager.tokens < 2) { showToast('Token tidak cukup (Butuh 2 T)!', 'warning'); return; }
+            gameState.manager.tokens -= 2;
+            populateTransferMarket();
+            updateUIHeader(); renderTransferMarket(); saveGameData(false);
+            showToast('Daftar bursa transfer diperbarui!', 'success');
         }
-        function buyTransferPlayer(id) {
-            const idx = gameState.transferMarket.findIndex(p => p.id === id);
+        window.refreshTransferMarket = refreshTransferMarket;
+
+        function renderTransferMarket() {
+            if (!gameState.transferMarket.length) populateTransferMarket();
+            const grid = document.getElementById('transferMarketGrid');
+            if (!grid) return;
+            grid.innerHTML = gameState.transferMarket.map(p => `
+                <div class="bg-slate-900 border border-slate-800 rounded-2xl p-4 flex flex-col justify-between gap-3">
+                    <div class="flex items-center justify-between">
+                        <div>
+                            <div class="font-outfit font-black text-sm text-white">${escapeHTML(p.name)}</div>
+                            <div class="text-[11px] text-slate-400">Posisi: <strong class="text-cyan-400">${p.pos}</strong> • OVR <strong class="text-emerald-400">${p.ovr}</strong></div>
+                        </div>
+                        <span class="px-2.5 py-1 rounded-xl bg-emerald-500/20 text-emerald-300 font-black">OVR ${p.ovr}</span>
+                    </div>
+                    <div class="flex items-center justify-between pt-2 border-t border-slate-800">
+                        <span class="font-bold text-amber-400">Rp ${p.price} M + ${p.tokens} T</span>
+                        <button onclick="buyTransferPlayer('${p.id}')" class="px-3 py-1.5 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black rounded-xl">Rekrut</button>
+                    </div>
+                </div>`).join('');
+        }
+
+        function buyTransferPlayer(tid) {
+            const idx = gameState.transferMarket.findIndex(p => p.id === tid);
             if (idx < 0) return;
             const p = gameState.transferMarket[idx];
             if (gameState.manager.budget < p.price || gameState.manager.tokens < p.tokens) {
-                showToast('Kas klub atau Token tidak mencukupi!', 'warning'); return;
+                showToast('Kas klub atau Token tidak mencukupi!', 'warning');
+                return;
             }
             gameState.manager.budget = Number((gameState.manager.budget - p.price).toFixed(1));
             gameState.manager.tokens -= p.tokens;
-            gameState.squad.push({ id: p.id, name: p.name, num: p.num, pos: p.pos, ovr: p.ovr, stamina: 100, starter: false, injuredWeeks: 0, suspendedWeeks: 0 });
+            gameState.squad.push({
+                id: p.id, name: p.name, num: Math.floor(Math.random() * 80) + 12,
+                pos: p.pos, ovr: p.ovr, stamina: 98, starter: false, injuredWeeks: 0, suspendedWeeks: 0
+            });
             gameState.transferMarket.splice(idx, 1);
-            updateUIHeader(); renderTransferMarket(); saveGameData(false);
-            showToast(`${p.name} resmi bergabung ke ${gameState.club.name}!`, 'success');
-        }
-        function refreshTransferMarket() {
-            if (gameState.manager.tokens < 2) { showToast('Butuh 2 Token untuk menyegarkan bursa.', 'warning'); return; }
-            gameState.manager.tokens -= 2;
-            generateTransferMarket();
-            updateUIHeader(); renderTransferMarket(); saveGameData(false);
+            gameState.news.unshift(`RESMI! ${gameState.club.name} merekrut ${p.name} (OVR ${p.ovr})!`);
+            updateUIHeader(); renderTransferMarket(); renderDashboard(); saveGameData(false);
+            showToast(`Berhasil merekrut ${p.name}!`, 'success');
         }
         window.buyTransferPlayer = buyTransferPlayer;
-        window.refreshTransferMarket = refreshTransferMarket;
 
+        /* Training & Facilities */
         function executeTeamTraining(type) {
             if (type === 'recovery') {
                 if (gameState.manager.restPacks < 2) { showToast('Butuh 2 Paket Istirahat!', 'warning'); return; }
                 gameState.manager.restPacks -= 2;
                 gameState.squad.forEach(p => p.stamina = Math.min(100, p.stamina + 18));
-                showToast('Stamina seluruh tim pulih +18%!', 'success');
-            } else {
-                const posTargets = type === 'attack' ? ['FW', 'MF'] : ['DF', 'GK'];
-                gameState.squad.forEach(p => {
-                    if (posTargets.includes(p.pos)) p.ovr = Math.min(120, p.ovr + 1);
-                    p.stamina = Math.max(40, p.stamina - 8);
-                });
-                gameState.manager.xp += 15;
-                showToast(`Latihan ${type === 'attack' ? 'Serangan' : 'Pertahanan'} selesai! (+1 OVR)`, 'success');
+                updateUIHeader(); renderDashboard(); saveGameData(false);
+                showToast('Seluruh skuad menjalani pemulihan fisik (+18% stamina)!', 'success');
+                return;
             }
-            checkLevelUp(); updateUIHeader(); renderDashboard(); saveGameData(false);
+            gameState.squad.forEach(p => {
+                p.stamina = Math.max(45, p.stamina - 8);
+                if (type === 'attack' && (p.pos === 'FW' || p.pos === 'MF') && Math.random() < 0.45) p.ovr = Math.min(115, p.ovr + 1);
+                if (type === 'defense' && (p.pos === 'DF' || p.pos === 'GK') && Math.random() < 0.45) p.ovr = Math.min(115, p.ovr + 1);
+            });
+            renderDashboard(); saveGameData(false);
+            showToast('Sesi latihan selesai! Beberapa pemain mengalami peningkatan OVR.', 'success');
         }
         window.executeTeamTraining = executeTeamTraining;
 
         function renderFacilitiesTab() {
-            const defs = [
-                { key: 'stadium', name: 'Stadion Utama', desc: 'Menambah pemasukan tiket setiap laga liga.', icon: 'fa-building-columns' },
-                { key: 'training', name: 'Pusat Latihan', desc: 'Meningkatkan kualitas sesi latihan tim.', icon: 'fa-dumbbell' },
-                { key: 'academy', name: 'Akademi Muda', desc: 'Mencetak talenta muda berbakat Nusantara.', icon: 'fa-graduation-cap' },
-                { key: 'medical', name: 'Klinik Medis', desc: 'Mempercepat pemulihan stamina & cedera.', icon: 'fa-hospital' }
+            const items = [
+                { key: 'stadium', name: 'Stadion Utama', icon: 'fa-building', desc: 'Menambah pemasukan tiket laga kandang.' },
+                { key: 'training', name: 'Pusat Latihan', icon: 'fa-dumbbell', desc: 'Mempercepat perkembangan OVR pemain.' },
+                { key: 'academy', name: 'Akademi Muda', icon: 'fa-graduation-cap', desc: 'Mencetak talenta muda untuk skuad.' },
+                { key: 'medical', name: 'Klinik Medis', icon: 'fa-hospital', desc: 'Mempercepat pemulihan cedera pemain.' }
             ];
-            document.getElementById('facilitiesGrid').innerHTML = defs.map(f => {
-                const lv = gameState.facilities[f.key] || 1;
-                const cost = lv * 20;
+            const grid = document.getElementById('facilitiesGrid');
+            if (!grid) return;
+            grid.innerHTML = items.map(it => {
+                const lv = gameState.facilities[it.key] || 1;
+                const cost = lv * 15;
                 return `
-                    <div class="bg-slate-900 border border-slate-800 rounded-2xl p-4 space-y-2.5">
-                        <div class="flex justify-between items-center">
-                            <span class="font-bold text-white"><i class="fa-solid ${f.icon} text-emerald-400 mr-1.5"></i>${f.name}</span>
-                            <span class="text-amber-400 font-black">Lv.${lv}</span>
+                    <div class="bg-slate-900 border border-slate-800 rounded-2xl p-4 flex flex-col justify-between gap-3">
+                        <div class="space-y-1.5">
+                            <div class="flex items-center justify-between">
+                                <span class="text-emerald-400 font-black text-sm"><i class="fa-solid ${it.icon} mr-1"></i> ${it.name}</span>
+                                <span class="px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 font-black">Lv.${lv}</span>
+                            </div>
+                            <p class="text-slate-400">${it.desc}</p>
                         </div>
-                        <p class="text-slate-400">${f.desc}</p>
-                        <button onclick="upgradeFacility('${f.key}')" class="w-full py-2 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black rounded-xl">Upgrade (Rp ${cost} M)</button>
+                        <button onclick="upgradeFacility('${it.key}', ${cost})" class="w-full py-2 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black rounded-xl">
+                            Tingkatkan (Rp ${cost} M)
+                        </button>
                     </div>`;
             }).join('');
         }
-        function upgradeFacility(key) {
-            const lv = gameState.facilities[key] || 1;
-            const cost = lv * 20;
-            if (gameState.manager.budget < cost) { showToast('Kas klub tidak mencukupi!', 'warning'); return; }
+
+        function upgradeFacility(key, cost) {
+            if (gameState.manager.budget < cost) { showToast('Kas klub tidak cukup!', 'warning'); return; }
             gameState.manager.budget = Number((gameState.manager.budget - cost).toFixed(1));
-            gameState.facilities[key] = lv + 1;
-            gameState.manager.xp += 25;
-            checkLevelUp(); updateUIHeader(); renderFacilitiesTab(); saveGameData(false);
-            showToast(`Fasilitas berhasil di-upgrade ke Level ${lv + 1}!`, 'success');
+            gameState.facilities[key] = (gameState.facilities[key] || 1) + 1;
+            updateUIHeader(); renderFacilitiesTab(); saveGameData(false);
+            showToast(`Fasilitas berhasil ditingkatkan ke Level ${gameState.facilities[key]}!`, 'success');
         }
         window.upgradeFacility = upgradeFacility;
 
-        // Club Settings
-        function populateEmblemDropdowns() {
-            const html = EMBLEM_OPTIONS.map(o => `<option value="${o.id}">${o.label}</option>`).join('');
-            ['setClubEmblem', 'scratchEmblem'].forEach(id => {
-                const el = document.getElementById(id);
-                if (el) el.innerHTML = html;
-            });
-        }
-        function populateSettingsForm() {
-            document.getElementById('setClubName').value = gameState.club.name;
-            document.getElementById('setManagerName').value = gameState.manager.name;
-            document.getElementById('setClubCity').value = gameState.club.city;
-            document.getElementById('setClubStadium').value = gameState.club.stadium;
-            document.getElementById('setClubEmblem').value = gameState.club.emblem || 'garuda';
-            document.getElementById('setJerseyPattern').value = gameState.club.pattern || 'solid';
-            document.getElementById('setPrimaryColor').value = gameState.club.primaryColor || '#dc2626';
-            document.getElementById('setSecondaryColor').value = gameState.club.secondaryColor || '#ffffff';
-            updateSettingsEmblemPreview();
-        }
-        function updateSettingsEmblemPreview() {
-            const emb = document.getElementById('setClubEmblem').value;
-            const c1 = document.getElementById('setPrimaryColor').value;
-            const c2 = document.getElementById('setSecondaryColor').value;
-            document.getElementById('settingsEmblemPreview').innerHTML = getCartoonEmblemSVG(emb, c1, c2, 'w-20 h-20', gameState.club.customEmblem);
-        }
-        function saveClubSettings() {
-            const oldName = gameState.club.name;
-            gameState.club.name = document.getElementById('setClubName').value.trim() || gameState.club.name;
-            gameState.manager.name = document.getElementById('setManagerName').value.trim() || gameState.manager.name;
-            gameState.club.city = document.getElementById('setClubCity').value.trim() || gameState.club.city;
-            gameState.club.stadium = document.getElementById('setClubStadium').value.trim() || gameState.club.stadium;
-            gameState.club.emblem = document.getElementById('setClubEmblem').value;
-            gameState.club.pattern = document.getElementById('setJerseyPattern').value;
-            gameState.club.primaryColor = document.getElementById('setPrimaryColor').value;
-            gameState.club.secondaryColor = document.getElementById('setSecondaryColor').value;
-
-            const tbl = getActiveLeagueTable();
-            const me = tbl.find(t => t.main || t.name === oldName);
-            if (me) {
-                me.name = gameState.club.name; me.coach = gameState.manager.name;
-                me.emblem = gameState.club.emblem; me.primaryColor = gameState.club.primaryColor; me.secondaryColor = gameState.club.secondaryColor;
-            }
-            updateUIHeader(); renderDashboard(); renderStandingsTab(); saveGameData(false);
-            showToast('Identitas klub berhasil disimpan!', 'success');
-        }
-        window.updateSettingsEmblemPreview = updateSettingsEmblemPreview;
-        window.saveClubSettings = saveClubSettings;
-
         /* ===================================================
-           8. CAREER MODAL (81 CLUBS + BUILD FROM SCRATCH)
-           =================================================== */
-        let careerFilterDiv = 'LIGA SUPER';
-        let selectedCareerClubId = 'persija';
-
-        function openCareerModal() {
-            document.getElementById('careerModal').classList.remove('hidden');
-            filterCareerDivision(careerFilterDiv);
-            updateScratchPreview();
-        }
-        function closeCareerModal() {
-            document.getElementById('careerModal').classList.add('hidden');
-        }
-        function switchCareerModeTab(mode) {
-            document.getElementById('careerPanelExisting').classList.toggle('hidden', mode !== 'existing');
-            document.getElementById('careerPanelScratch').classList.toggle('hidden', mode !== 'scratch');
-            document.getElementById('careerTabExisting').className = mode === 'existing' ? 'px-4 py-2 rounded-xl bg-emerald-500 text-slate-950 font-black' : 'px-4 py-2 rounded-xl bg-slate-800 text-slate-300';
-            document.getElementById('careerTabScratch').className = mode === 'scratch' ? 'px-4 py-2 rounded-xl bg-emerald-500 text-slate-950 font-black' : 'px-4 py-2 rounded-xl bg-slate-800 text-slate-300';
-        }
-        function filterCareerDivision(div) {
-            careerFilterDiv = div;
-            document.querySelectorAll('.cdiv-btn').forEach(b => {
-                b.className = b.dataset.cdiv === div
-                    ? 'cdiv-btn px-3 py-1.5 rounded-xl bg-amber-500 text-slate-950 font-black'
-                    : 'cdiv-btn px-3 py-1.5 rounded-xl bg-slate-800 text-slate-300';
-            });
-            const clubs = DIVISIONS_MAP[div] || SUPER_LEAGUE_2026_CLUBS;
-            if (!clubs.some(c => c.id === selectedCareerClubId)) selectedCareerClubId = clubs[0].id;
-            document.getElementById('careerClubGrid').innerHTML = clubs.map(c => {
-                const sel = c.id === selectedCareerClubId;
-                return `
-                    <button onclick="selectCareerClub('${c.id}')" class="text-left p-2.5 rounded-xl border transition flex items-center gap-2.5 ${sel ? 'bg-emerald-950/60 border-emerald-400 ring-1 ring-emerald-400' : 'bg-slate-900 border-slate-800 hover:border-slate-600'}">
-                        ${getCartoonEmblemSVG(c.emblem, c.primaryColor, c.secondaryColor, 'w-10 h-10')}
-                        <div class="min-w-0 flex-1">
-                            <div class="font-bold text-white truncate">${escapeHTML(c.name)}</div>
-                            <div class="text-[10px] text-slate-400 truncate">${escapeHTML(c.coach)} • OVR ${c.ovr}</div>
-                        </div>
-                    </button>`;
-            }).join('');
-            updateExistingCareerPreview();
-        }
-        function selectCareerClub(id) {
-            selectedCareerClubId = id;
-            filterCareerDivision(careerFilterDiv);
-        }
-        function updateExistingCareerPreview() {
-            const c = ALL_INDONESIAN_CLUBS.find(x => x.id === selectedCareerClubId) || SUPER_LEAGUE_2026_CLUBS[0];
-            document.getElementById('existingEmblemPreview').innerHTML = getCartoonEmblemSVG(c.emblem, c.primaryColor, c.secondaryColor, 'w-12 h-12', pendingCustomEmblems.existing);
-        }
-        function updateScratchPreview() {
-            const emb = document.getElementById('scratchEmblem').value || 'garuda';
-            const c1 = document.getElementById('scratchColor1').value || '#dc2626';
-            const c2 = document.getElementById('scratchColor2').value || '#ffffff';
-            document.getElementById('scratchEmblemPreview').innerHTML = getCartoonEmblemSVG(emb, c1, c2, 'w-16 h-16', pendingCustomEmblems.scratch);
-        }
-        function startExistingClubCareer() {
-            simAccumulator = 0;
-            matchState.running = false;
-            matchState.finished = false;
-            matchState.opponent = null;
-
-            const c = ALL_INDONESIAN_CLUBS.find(x => x.id === selectedCareerClubId) || SUPER_LEAGUE_2026_CLUBS[0];
-            const customCoach = document.getElementById('existingManagerInput').value.trim();
-            gameState.club = {
-                id: c.id, name: c.name, league: c.league, city: c.city, stadium: c.stadium,
-                primaryColor: c.primaryColor, secondaryColor: c.secondaryColor,
-                pattern: c.pattern || 'solid', emblem: c.emblem, customEmblem: pendingCustomEmblems.existing || null
-            };
-            gameState.manager.name = customCoach || c.coach;
-            gameState.manager.budget = c.budget;
-            gameState.manager.totalFines = 0;
-            gameState.season.week = 1;
-            gameState.squad = createSquadForClub(c);
-            ensureAllDivisionsState(true);
-            resetCupState();
-            ensureTournamentsState(true);
-            selectedStandingsDivision = c.league;
-            closeCareerModal();
-            switchTab('dashboard');
-            updateUIHeader(); renderDashboard(); renderStandingsTab(); renderSquadTab(); saveGameData(false);
-            showToast(`Karier dimulai bersama ${c.name} (${c.league})!`, 'success');
-        }
-        function startScratchClubCareer() {
-            simAccumulator = 0;
-            matchState.running = false;
-            matchState.finished = false;
-            matchState.opponent = null;
-
-            const name = document.getElementById('scratchClubName').value.trim() || 'Garuda Nusantara FC';
-            const coach = document.getElementById('scratchManagerName').value.trim() || 'Coach Nusantara';
-            const city = document.getElementById('scratchCity').value.trim() || 'Jakarta';
-            const stadium = document.getElementById('scratchStadium').value.trim() || 'Stadion Garuda';
-            const div = document.getElementById('scratchDivision').value || 'LIGA 4';
-            const tier = document.getElementById('scratchTier').value;
-            const emb = document.getElementById('scratchEmblem').value || 'garuda';
-            const c1 = document.getElementById('scratchColor1').value || '#dc2626';
-            const c2 = document.getElementById('scratchColor2').value || '#ffffff';
-
-            const baseOvr = tier === 'ambitious' ? 94 : 82;
-            const startBudget = tier === 'ambitious' ? 120 : 45;
-            gameState.club = {
-                id: 'USER_CUSTOM', name, league: div, city, stadium,
-                primaryColor: c1, secondaryColor: c2, pattern: 'solid',
-                emblem: emb, customEmblem: pendingCustomEmblems.scratch || null
-            };
-            gameState.manager.name = coach;
-            gameState.manager.budget = startBudget;
-            gameState.manager.totalFines = 0;
-            gameState.season.week = 1;
-            gameState.squad = createSquadForClub(gameState.club, baseOvr);
-            ensureAllDivisionsState(true);
-            resetCupState();
-            ensureTournamentsState(true);
-            selectedStandingsDivision = div;
-            closeCareerModal();
-            switchTab('dashboard');
-            updateUIHeader(); renderDashboard(); renderStandingsTab(); renderSquadTab(); saveGameData(false);
-            showToast(`Klub baru ${name} resmi berlaga di ${div}!`, 'success');
-        }
-        window.openCareerModal = openCareerModal;
-        window.closeCareerModal = closeCareerModal;
-        window.switchCareerModeTab = switchCareerModeTab;
-        window.filterCareerDivision = filterCareerDivision;
-        window.selectCareerClub = selectCareerClub;
-        window.updateScratchPreview = updateScratchPreview;
-        window.startExistingClubCareer = startExistingClubCareer;
-        window.startScratchClubCareer = startScratchClubCareer;
-
-        /* ===================================================
-           8B. TOKO RESMI & KONFIGURASI PORTAL GAME
-           (Katalog, Harga, Pas & Bonus dapat di-setting dan dibaca
-           otomatis dari Portal Game via postMessage PORTAL_SHOP_CONFIG)
+           TOKO PORTAL GAME (DINAMIS DARI PORTAL HOST)
            =================================================== */
         const DEFAULT_PORTAL_SHOP_CATALOG = [
-            {
-                sku: 'token_25', category: 'token', name: 'Kantong Token Transfer',
-                desc: 'Tambah 25 Token Transfer untuk rekrut pemain bintang di bursa.',
-                price: 15000, priceLabel: 'Rp 15.000', badge: 'POPULER', icon: 'fa-ticket', color: 'amber',
-                enabled: true, oneTime: false,
-                rewards: { tokens: 25 }
-            },
-            {
-                sku: 'token_100', category: 'token', name: 'Peti Token Transfer Elit',
-                desc: 'Tambah 100 Token Transfer + Bonus 10 Token ekstra.',
-                price: 50000, priceLabel: 'Rp 50.000', badge: 'HEMAT 20%', icon: 'fa-gem', color: 'amber',
-                enabled: true, oneTime: false,
-                rewards: { tokens: 110 }
-            },
-            {
-                sku: 'medis_10', category: 'medis', name: 'Paket Medis Standar (10x)',
-                desc: '10 Paket Medis untuk menyembuhkan pemain cedera secara instan.',
-                price: 10000, priceLabel: 'Rp 10.000', badge: 'MEDIS', icon: 'fa-kit-medical', color: 'rose',
-                enabled: true, oneTime: false,
-                rewards: { medKits: 10 }
-            },
-            {
-                sku: 'medis_30', category: 'medis', name: 'Paket Medis Tim Lengkap (30x)',
-                desc: '30 Paket Medis agar seluruh skuad selalu siap tempur tiap pekan.',
-                price: 25000, priceLabel: 'Rp 25.000', badge: 'TERLARIS', icon: 'fa-briefcase-medical', color: 'rose',
-                enabled: true, oneTime: false,
-                rewards: { medKits: 30 }
-            },
-            {
-                sku: 'istirahat_15', category: 'istirahat', name: 'Paket Istirahat Kilat (15x)',
-                desc: '15 Paket Istirahat untuk memulihkan stamina pemain hingga 100%.',
-                price: 10000, priceLabel: 'Rp 10.000', badge: 'STAMINA', icon: 'fa-bolt', color: 'cyan',
-                enabled: true, oneTime: false,
-                rewards: { restPacks: 15 }
-            },
-            {
-                sku: 'istirahat_50', category: 'istirahat', name: 'Paket Istirahat Musim (50x)',
-                desc: '50 Paket Istirahat untuk jadwal padat Liga & 9 Turnamen.',
-                price: 28000, priceLabel: 'Rp 28.000', badge: 'BEST VALUE', icon: 'fa-battery-full', color: 'cyan',
-                enabled: true, oneTime: false,
-                rewards: { restPacks: 50 }
-            },
-            {
-                sku: 'kas_50m', category: 'kas', name: 'Suntikan Kas Klub Rp 50 M',
-                desc: 'Dana segar Rp 50 Miliar untuk upgrade stadion & belanja pemain.',
-                price: 20000, priceLabel: 'Rp 20.000', badge: 'SPONSOR', icon: 'fa-coins', color: 'emerald',
-                enabled: true, oneTime: false,
-                rewards: { budget: 50 }
-            },
-            {
-                sku: 'kas_200m', category: 'kas', name: 'Dana Investor Sultan Rp 200 M',
-                desc: 'Suntikan kas jumbo Rp 200 Miliar untuk membangun tim juara.',
-                price: 65000, priceLabel: 'Rp 65.000', badge: 'SULTAN', icon: 'fa-sack-dollar', color: 'emerald',
-                enabled: true, oneTime: false,
-                rewards: { budget: 200 }
-            },
-            {
-                sku: 'pas_musim_vip', category: 'pas', name: 'Pas Musim Manajer VIP',
-                desc: 'Aktifkan status Pas VIP + 40 Token + Rp 60 M Kas + 15 Istirahat + 10 Medis.',
-                price: 49000, priceLabel: 'Rp 49.000', badge: 'PAS VIP', icon: 'fa-crown', color: 'purple',
-                enabled: true, oneTime: true,
-                rewards: { passActive: true, tokens: 40, budget: 60, restPacks: 15, medKits: 10 }
-            },
-            {
-                sku: 'bonus_portal_starter', category: 'bonus', name: 'Bonus Selamat Datang Portal',
-                desc: 'Hadiah spesial dari Portal Game: +10 Token, +5 Istirahat, +5 Medis, +Rp 25 M.',
-                price: 0, priceLabel: 'GRATIS', badge: 'BONUS PORTAL', icon: 'fa-gift', color: 'emerald',
-                enabled: true, oneTime: true,
-                rewards: { tokens: 10, restPacks: 5, medKits: 5, budget: 25 }
-            }
+            // 1. Token Transfer
+            { sku: 'tok_25', category: 'token', name: '25 Token Transfer', desc: 'Modal cepat untuk menyegarkan bursa transfer & merekrut pemain bintang.', price: 15000, priceLabel: 'Rp 15.000', badge: 'HEMAT', icon: 'fa-ticket', color: 'amber', rewards: { tokens: 25 }, enabled: true },
+            { sku: 'tok_80', category: 'token', name: '80 Token Transfer', desc: 'Paket populer untuk membangun skuad juara Liga Super.', price: 45000, priceLabel: 'Rp 45.000', badge: 'TERLARIS', icon: 'fa-ticket', color: 'amber', rewards: { tokens: 80 }, enabled: true },
+            { sku: 'tok_200', category: 'token', name: '200 Token Transfer', desc: 'Stok melimpah bagi manajer ambisius pemburu trofi.', price: 99000, priceLabel: 'Rp 99.000', badge: 'BONUS +25%', icon: 'fa-tickets-perforated', color: 'amber', rewards: { tokens: 200 }, enabled: true },
+
+            // 2. Paket Medis
+            { sku: 'med_10', category: 'medis', name: '10 Paket Medis', desc: 'Sembuhkan pemain cedera instan agar langsung siap tampil di laga penting.', price: 10000, priceLabel: 'Rp 10.000', badge: '', icon: 'fa-kit-medical', color: 'rose', rewards: { medKits: 10 }, enabled: true },
+            { sku: 'med_30', category: 'medis', name: '30 Paket Medis Klub', desc: 'Persediaan klinik medis satu musim penuh untuk tim utama.', price: 25000, priceLabel: 'Rp 25.000', badge: 'HEMAT', icon: 'fa-briefcase-medical', color: 'rose', rewards: { medKits: 30 }, enabled: true },
+
+            // 3. Paket Istirahat
+            { sku: 'rest_15', category: 'istirahat', name: '15 Paket Istirahat', desc: 'Pulihkan stamina pemain yang kelelahan akibat jadwal padat liga & piala.', price: 10000, priceLabel: 'Rp 10.000', badge: '', icon: 'fa-bolt', color: 'cyan', rewards: { restPacks: 15 }, enabled: true },
+            { sku: 'rest_45', category: 'istirahat', name: '45 Paket Istirahat', desc: 'Suplemen kebugaran ekstra untuk rotasi pemain tanpa penurunan performa.', price: 25000, priceLabel: 'Rp 25.000', badge: 'POPULER', icon: 'fa-battery-full', color: 'cyan', rewards: { restPacks: 45 }, enabled: true },
+
+            // 4. Kas Klub
+            { sku: 'cash_50', category: 'kas', name: 'Suntikan Kas Rp 50 M', desc: 'Tambahan dana sponsor Rp 50 Miliar langsung ke kas klub.', price: 19000, priceLabel: 'Rp 19.000', badge: '', icon: 'fa-sack-dollar', color: 'emerald', rewards: { budget: 50 }, enabled: true },
+            { sku: 'cash_180', category: 'kas', name: 'Suntikan Kas Rp 180 M', desc: 'Investasi besar Rp 180 Miliar untuk belanja pemain & upgrade stadion.', price: 59000, priceLabel: 'Rp 59.000', badge: 'MEGA SPONSOR', icon: 'fa-coins', color: 'emerald', rewards: { budget: 180 }, enabled: true },
+
+            // 5. Pas (Season / VIP Pass)
+            { sku: 'pass_vip', category: 'pas', name: 'Pas Manajer VIP Musim Ini', desc: 'Langsung dapat +50 Token, +100 M Kas, +20 Medis, +20 Istirahat & lencana VIP!', price: 79000, priceLabel: 'Rp 79.000', badge: 'VIP PASS', icon: 'fa-crown', color: 'amber', rewards: { tokens: 50, budget: 100, medKits: 20, restPacks: 20, vipPass: true }, enabled: true },
+
+            // 6. Bonus
+            { sku: 'bonus_daily', category: 'bonus', name: 'Klaim Bonus Harian Manajer', desc: 'Hadiah gratis harian dari manajemen: +3 Token, +2 Medis, +3 Istirahat & +Rp 5 M.', price: 0, priceLabel: 'GRATIS', badge: 'HARIAN', icon: 'fa-gift', color: 'purple', rewards: { tokens: 3, medKits: 2, restPacks: 3, budget: 5 }, isDailyFree: true, enabled: true },
+            { sku: 'bonus_starter', category: 'bonus', name: 'Paket Komplit Akselerasi', desc: 'Paket lengkap: +40 Token, +80 M Kas, +15 Medis & +15 Paket Istirahat.', price: 49000, priceLabel: 'Rp 49.000', badge: 'NILAI TERBAIK', icon: 'fa-boxes-stacked', color: 'purple', rewards: { tokens: 40, budget: 80, medKits: 15, restPacks: 15 }, enabled: true }
         ];
 
-        let portalShopCatalog = DEFAULT_PORTAL_SHOP_CATALOG.map(i => ({ ...i, rewards: { ...i.rewards } }));
+        let portalShopCatalog = JSON.parse(JSON.stringify(DEFAULT_PORTAL_SHOP_CATALOG));
         let portalShopSynced = false;
         let activeShopCategory = 'all';
 
         function ensureShopState() {
             if (!gameState.shop || typeof gameState.shop !== 'object') {
-                gameState.shop = { passActive: false, claimedSkus: [], history: [] };
+                gameState.shop = { vipPass: false, lastDailyClaimDate: '', purchasedTxIds: [] };
             }
-            if (!Array.isArray(gameState.shop.claimedSkus)) gameState.shop.claimedSkus = [];
-            if (!Array.isArray(gameState.shop.history)) gameState.shop.history = [];
+            if (!Array.isArray(gameState.shop.purchasedTxIds)) gameState.shop.purchasedTxIds = [];
+        }
+
+        function formatPortalPrice(price, priceLabel) {
+            if (priceLabel && String(priceLabel).trim() !== '') return String(priceLabel);
+            const num = Number(price || 0);
+            if (num <= 0) return 'GRATIS';
+            return 'Rp ' + num.toLocaleString('id-ID');
         }
 
         function applyPortalShopConfig(payload) {
             if (!payload) return;
             const list = Array.isArray(payload) ? payload : (Array.isArray(payload.items) ? payload.items : null);
-            if (list && list.length > 0) {
-                portalShopCatalog = list.map(item => ({
-                    sku: String(item.sku || 'item_' + Math.random().toString(36).slice(2, 7)),
-                    category: String(item.category || 'bonus'),
-                    name: String(item.name || 'Item Portal'),
-                    desc: String(item.desc || ''),
-                    price: Number(item.price || 0),
-                    priceLabel: String(item.priceLabel || (item.price ? `Rp ${Number(item.price).toLocaleString('id-ID')}` : 'GRATIS')),
-                    badge: String(item.badge || 'PORTAL'),
-                    icon: String(item.icon || 'fa-bag-shopping'),
-                    color: String(item.color || 'amber'),
-                    enabled: item.enabled !== false,
-                    oneTime: Boolean(item.oneTime),
-                    rewards: item.rewards && typeof item.rewards === 'object' ? { ...item.rewards } : {}
-                }));
-            }
+            if (!list || list.length === 0) return;
+
+            const validCats = ['token', 'medis', 'istirahat', 'kas', 'pas', 'bonus'];
+            const merged = list.map((raw, idx) => {
+                const def = DEFAULT_PORTAL_SHOP_CATALOG.find(d => d.sku === raw.sku) || {};
+                const cat = validCats.includes(String(raw.category || '').toLowerCase())
+                    ? String(raw.category).toLowerCase()
+                    : (def.category || 'bonus');
+                const priceNum = raw.price !== undefined ? Number(raw.price) : (def.price || 0);
+                return {
+                    sku: raw.sku || def.sku || `portal_item_${idx}`,
+                    category: cat,
+                    name: raw.name || def.name || 'Paket Klub',
+                    desc: raw.desc || raw.description || def.desc || 'Paket resmi dari Portal Game.',
+                    price: priceNum,
+                    priceLabel: formatPortalPrice(priceNum, raw.priceLabel),
+                    badge: raw.badge !== undefined ? String(raw.badge) : (def.badge || ''),
+                    icon: raw.icon || def.icon || 'fa-bag-shopping',
+                    color: raw.color || def.color || 'amber',
+                    rewards: (raw.rewards && typeof raw.rewards === 'object') ? raw.rewards : (def.rewards || { tokens: 10 }),
+                    isDailyFree: Boolean(raw.isDailyFree || def.isDailyFree),
+                    enabled: raw.enabled !== false
+                };
+            });
+
+            portalShopCatalog = merged;
             portalShopSynced = true;
             renderShopTab();
+            showToast('Katalog & harga Toko tersinkronisasi dari Portal Game!', 'success');
+        }
+
+        function grantShopRewards(rewards, itemName) {
+            ensureShopState();
+            const r = rewards || {};
+            const parts = [];
+            if (Number(r.tokens) > 0) {
+                gameState.manager.tokens += Number(r.tokens);
+                parts.push(`+${r.tokens} Token`);
+            }
+            if (Number(r.medKits) > 0) {
+                gameState.manager.medKits += Number(r.medKits);
+                parts.push(`+${r.medKits} Medis`);
+            }
+            if (Number(r.restPacks) > 0) {
+                gameState.manager.restPacks += Number(r.restPacks);
+                parts.push(`+${r.restPacks} Istirahat`);
+            }
+            if (Number(r.budget) > 0) {
+                gameState.manager.budget = Number((gameState.manager.budget + Number(r.budget)).toFixed(1));
+                parts.push(`+Rp ${r.budget} M`);
+            }
+            if (r.vipPass) {
+                gameState.shop.vipPass = true;
+                parts.push('Pas VIP Aktif');
+            }
+            checkLevelUp();
+            updateUIHeader();
+            renderDashboard();
+            renderShopTab();
+            saveGameData(false);
+            showToast(`${itemName} berhasil diklaim! (${parts.join(', ')})`, 'success');
+        }
+
+        function handlePortalPurchaseSuccess(payload) {
+            PortalSDK.purchaseBusy = false;
+            ensureShopState();
+            if (!payload) return;
+            if (payload.txId && gameState.shop.purchasedTxIds.includes(payload.txId)) return;
+            if (payload.txId) gameState.shop.purchasedTxIds.push(payload.txId);
+
+            const item = portalShopCatalog.find(it => it.sku === payload.sku) || DEFAULT_PORTAL_SHOP_CATALOG.find(it => it.sku === payload.sku);
+            const rewards = (payload.rewards && typeof payload.rewards === 'object') ? payload.rewards : (item ? item.rewards : null);
+            if (!rewards) {
+                showToast('Pembelian dikonfirmasi oleh Portal Game.', 'info');
+                return;
+            }
+            grantShopRewards(rewards, item ? item.name : (payload.name || 'Item Toko'));
         }
 
         function syncPortalShopConfig() {
             const sent = PortalSDK.requestShopConfig();
             if (sent) {
-                showToast('Meminta pembaruan katalog Toko dari Portal Game...', 'info');
+                showToast('Meminta pembaruan katalog & harga dari Portal Game...', 'info');
             } else {
                 renderShopTab();
-                showToast('Katalog Toko siap (Mode Standalone).', 'info');
+                showToast('Katalog toko lokal aktif (tidak terhubung ke iframe Portal).', 'info');
             }
         }
         window.syncPortalShopConfig = syncPortalShopConfig;
 
         function filterShopCategory(cat) {
             activeShopCategory = cat;
-            document.querySelectorAll('.shop-cat-btn').forEach(b => {
-                const active = b.dataset.shopcat === cat;
-                b.className = active
+            document.querySelectorAll('.shop-cat-btn').forEach(btn => {
+                const active = btn.dataset.shopcat === cat;
+                btn.className = active
                     ? 'shop-cat-btn px-3.5 py-1.5 rounded-xl bg-amber-500 text-slate-950 font-black'
                     : 'shop-cat-btn px-3.5 py-1.5 rounded-xl bg-slate-800 text-slate-300 hover:bg-slate-700';
             });
@@ -4092,299 +4003,237 @@
         }
         window.filterShopCategory = filterShopCategory;
 
+        function buyShopItem(sku) {
+            ensureShopState();
+            const item = portalShopCatalog.find(it => it.sku === sku);
+            if (!item || item.enabled === false) return;
+
+            if (item.isDailyFree || Number(item.price) <= 0) {
+                const today = new Date().toISOString().slice(0, 10);
+                if (item.isDailyFree && gameState.shop.lastDailyClaimDate === today) {
+                    showToast('Bonus Harian sudah diklaim hari ini. Kembali lagi besok!', 'warning');
+                    return;
+                }
+                if (item.isDailyFree) gameState.shop.lastDailyClaimDate = today;
+                grantShopRewards(item.rewards, item.name);
+                return;
+            }
+
+            if (item.category === 'pas' && gameState.shop.vipPass) {
+                showToast('Pas Manajer VIP sudah aktif untuk musim ini!', 'info');
+                return;
+            }
+
+            PortalSDK.requestPurchase(item);
+        }
+        window.buyShopItem = buyShopItem;
+
         function renderShopTab() {
             ensureShopState();
             const syncBadge = document.getElementById('shopPortalSyncBadge');
             if (syncBadge) {
-                syncBadge.innerText = portalShopSynced ? 'TERSINKRON PORTAL GAME' : 'KATALOG DEFAULT (SIAP PORTAL)';
-                syncBadge.className = portalShopSynced
-                    ? 'text-[10px] font-black bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 px-2.5 py-0.5 rounded-full'
-                    : 'text-[10px] font-black bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 px-2.5 py-0.5 rounded-full';
+                if (portalShopSynced) {
+                    syncBadge.className = 'text-[10px] font-black bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 px-2.5 py-0.5 rounded-full';
+                    syncBadge.innerText = 'TERSINKRON PORTAL';
+                } else {
+                    syncBadge.className = 'text-[10px] font-black bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 px-2.5 py-0.5 rounded-full';
+                    syncBadge.innerText = 'KATALOG STANDAR';
+                }
             }
             const passBadge = document.getElementById('shopPassStatusBadge');
-            if (passBadge) passBadge.classList.toggle('hidden', !gameState.shop.passActive);
+            if (passBadge) passBadge.classList.toggle('hidden', !gameState.shop.vipPass);
 
             const grid = document.getElementById('shopItemsGrid');
             if (!grid) return;
 
-            const visibleItems = portalShopCatalog.filter(item =>
-                item.enabled !== false && (activeShopCategory === 'all' || item.category === activeShopCategory)
-            );
-
-            if (visibleItems.length === 0) {
-                grid.innerHTML = '<div class="col-span-full text-center text-slate-400 py-6">Tidak ada item tersedia pada kategori ini.</div>';
-                return;
-            }
-
+            const today = new Date().toISOString().slice(0, 10);
+            const catLabels = {
+                token: 'Token Transfer', medis: 'Paket Medis', istirahat: 'Paket Istirahat',
+                kas: 'Kas Klub', pas: 'Pas', bonus: 'Bonus'
+            };
             const colorStyles = {
                 amber: 'text-amber-400 bg-amber-500/15 border-amber-500/30',
                 rose: 'text-rose-400 bg-rose-500/15 border-rose-500/30',
                 cyan: 'text-cyan-400 bg-cyan-500/15 border-cyan-500/30',
                 emerald: 'text-emerald-400 bg-emerald-500/15 border-emerald-500/30',
-                purple: 'text-purple-300 bg-purple-500/15 border-purple-500/30'
+                purple: 'text-purple-400 bg-purple-500/15 border-purple-500/30'
             };
 
+            const visibleItems = portalShopCatalog.filter(it => it.enabled !== false && (activeShopCategory === 'all' || it.category === activeShopCategory));
+            if (visibleItems.length === 0) {
+                grid.innerHTML = '<div class="col-span-full text-center py-8 text-slate-400">Belum ada paket tersedia untuk kategori ini.</div>';
+                return;
+            }
+
             grid.innerHTML = visibleItems.map(item => {
-                const alreadyClaimed = item.oneTime && gameState.shop.claimedSkus.includes(item.sku);
-                const cStyle = colorStyles[item.color] || colorStyles.amber;
+                const iconBox = colorStyles[item.color] || colorStyles.amber;
                 const r = item.rewards || {};
                 const rewardTags = [];
                 if (r.tokens) rewardTags.push(`+${r.tokens} Token`);
                 if (r.medKits) rewardTags.push(`+${r.medKits} Medis`);
                 if (r.restPacks) rewardTags.push(`+${r.restPacks} Istirahat`);
                 if (r.budget) rewardTags.push(`+Rp ${r.budget} M`);
-                if (r.passActive) rewardTags.push('Status Pas VIP');
+                if (r.vipPass) rewardTags.push('Status VIP');
+
+                const alreadyDaily = item.isDailyFree && gameState.shop.lastDailyClaimDate === today;
+                const alreadyVip = item.category === 'pas' && gameState.shop.vipPass;
+                const disabled = alreadyDaily || alreadyVip;
+                const btnText = alreadyDaily ? 'Sudah Diklaim' : (alreadyVip ? 'Sudah Aktif' : formatPortalPrice(item.price, item.priceLabel));
 
                 return `
-                    <div class="bg-slate-900/95 border ${alreadyClaimed ? 'border-emerald-500/40 opacity-80' : 'border-slate-800 hover:border-amber-500/50'} rounded-2xl p-4 flex flex-col justify-between gap-3 transition shadow">
-                        <div class="space-y-2">
+                    <div class="bg-slate-900/95 border border-slate-800 hover:border-amber-500/40 rounded-2xl p-4 flex flex-col justify-between gap-3 transition">
+                        <div class="space-y-2.5">
                             <div class="flex items-start justify-between gap-2">
-                                <span class="w-10 h-10 rounded-xl border flex items-center justify-center text-base shrink-0 ${cStyle}">
-                                    <i class="fa-solid ${escapeHTML(item.icon)}"></i>
-                                </span>
-                                <span class="text-[10px] font-black px-2 py-0.5 rounded-full border ${cStyle}">${escapeHTML(item.badge)}</span>
+                                <div class="flex items-center gap-2.5">
+                                    <div class="w-10 h-10 rounded-xl border ${iconBox} flex items-center justify-center text-base shrink-0">
+                                        <i class="fa-solid ${escapeHTML(item.icon)}"></i>
+                                    </div>
+                                    <div>
+                                        <div class="text-[10px] font-bold uppercase tracking-wider text-slate-400">${escapeHTML(catLabels[item.category] || item.category)}</div>
+                                        <div class="font-outfit font-black text-sm text-white leading-tight">${escapeHTML(item.name)}</div>
+                                    </div>
+                                </div>
+                                ${item.badge ? `<span class="text-[9px] font-black px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/40 shrink-0">${escapeHTML(item.badge)}</span>` : ''}
                             </div>
-                            <div>
-                                <h4 class="font-outfit font-black text-sm text-white">${escapeHTML(item.name)}</h4>
-                                <p class="text-[11px] text-slate-400 mt-0.5 leading-relaxed">${escapeHTML(item.desc)}</p>
-                            </div>
-                            <div class="flex flex-wrap gap-1.5 pt-1">
-                                ${rewardTags.map(tag => `<span class="text-[10px] font-bold bg-slate-950 border border-slate-700 text-slate-200 px-2 py-0.5 rounded-lg">${escapeHTML(tag)}</span>`).join('')}
+                            <p class="text-slate-400 leading-relaxed">${escapeHTML(item.desc)}</p>
+                            <div class="flex flex-wrap gap-1.5 pt-0.5">
+                                ${rewardTags.map(tag => `<span class="px-2 py-0.5 rounded-lg bg-slate-950 border border-slate-800 text-[10px] font-bold text-emerald-300">${escapeHTML(tag)}</span>`).join('')}
                             </div>
                         </div>
-                        <div class="pt-2 border-t border-slate-800 flex items-center justify-between gap-2">
-                            <span class="font-outfit font-black text-sm ${item.price === 0 ? 'text-emerald-400' : 'text-amber-300'}">${escapeHTML(item.priceLabel)}</span>
-                            <button onclick="buyShopItem('${escapeHTML(item.sku)}')" ${alreadyClaimed ? 'disabled' : ''} class="px-4 py-2 rounded-xl font-black text-xs transition ${alreadyClaimed ? 'bg-slate-800 text-emerald-400 cursor-not-allowed' : 'bg-emerald-500 hover:bg-emerald-400 text-slate-950 shadow'}">
-                                ${alreadyClaimed ? '<i class="fa-solid fa-check mr-1"></i>Dimiliki' : (item.price === 0 ? 'Klaim Bonus' : 'Beli Sekarang')}
-                            </button>
-                        </div>
-                    </div>
-                `;
+                        <button onclick="buyShopItem('${escapeHTML(item.sku)}')" ${disabled ? 'disabled' : ''} class="w-full py-2.5 px-3 rounded-xl font-black text-xs transition flex items-center justify-center gap-1.5 ${disabled ? 'bg-slate-800 text-slate-500 cursor-not-allowed' : (Number(item.price) <= 0 ? 'bg-emerald-500 hover:bg-emerald-400 text-slate-950' : 'bg-amber-500 hover:bg-amber-400 text-slate-950 shadow')}">
+                            <i class="fa-solid ${disabled ? 'fa-check' : (Number(item.price) <= 0 ? 'fa-gift' : 'fa-cart-shopping')}"></i>
+                            <span>${escapeHTML(btnText)}</span>
+                        </button>
+                    </div>`;
             }).join('');
-        }
-        window.renderShopTab = renderShopTab;
-
-        function buyShopItem(sku) {
-            ensureShopState();
-            const item = portalShopCatalog.find(i => i.sku === sku && i.enabled !== false);
-            if (!item) { showToast('Item tidak ditemukan di katalog Toko.', 'error'); return; }
-            if (item.oneTime && gameState.shop.claimedSkus.includes(item.sku)) {
-                showToast('Item/Pas ini sudah Anda miliki!', 'info');
-                return;
-            }
-            PortalSDK.requestPurchase(item);
-        }
-        window.buyShopItem = buyShopItem;
-
-        function handlePortalPurchaseSuccess(payload) {
-            PortalSDK.purchaseBusy = false;
-            ensureShopState();
-            const sku = payload && payload.sku;
-            const item = portalShopCatalog.find(i => i.sku === sku);
-            const rewards = (payload && payload.rewards) || (item && item.rewards) || {};
-
-            if (item && item.oneTime && gameState.shop.claimedSkus.includes(sku)) {
-                showToast('Item ini sudah pernah diklaim sebelumnya.', 'info');
-                return;
-            }
-
-            if (rewards.tokens) gameState.manager.tokens += Number(rewards.tokens);
-            if (rewards.medKits) gameState.manager.medKits += Number(rewards.medKits);
-            if (rewards.restPacks) gameState.manager.restPacks += Number(rewards.restPacks);
-            if (rewards.budget) gameState.manager.budget = Number((gameState.manager.budget + Number(rewards.budget)).toFixed(1));
-            if (rewards.passActive) gameState.shop.passActive = true;
-
-            if (item && item.oneTime && !gameState.shop.claimedSkus.includes(sku)) {
-                gameState.shop.claimedSkus.push(sku);
-            }
-            gameState.shop.history.unshift({
-                sku: sku || 'custom',
-                txId: payload.txId || ('TX-' + Date.now()),
-                at: new Date().toISOString()
-            });
-            if (gameState.shop.history.length > 20) gameState.shop.history.pop();
-
-            updateUIHeader();
-            renderDashboard();
-            renderShopTab();
-            saveGameData(false);
-            showToast(`Berhasil! ${item ? item.name : 'Item Toko'} telah ditambahkan ke akun klub Anda!`, 'success');
         }
 
         /* ===================================================
-           8C. ARENA PvP ONLINE (TANTANG MANAJER LAIN & HADIAH)
-           Mendukung daftar manajer online dari Portal Game
-           melalui event postMessage PORTAL_PVP_PLAYERS
+           ARENA PvP ONLINE (TANTANG MANAJER LAIN & HADIAH LAGA)
            =================================================== */
-        const DEFAULT_ONLINE_MANAGERS = [
-            { id: 'pvp_1', managerName: 'Coach Bima99', clubName: 'Garuda Muda FC', division: 'LIGA SUPER', ovr: 96, rating: 1040, formation: '4-3-3', emblem: 'garuda', primaryColor: '#dc2626', secondaryColor: '#ffffff', online: true, rewards: { budget: 12, xp: 45, tokens: 3, restPacks: 2, medKits: 0 } },
-            { id: 'pvp_2', managerName: 'RakaTaktik', clubName: 'Maung Selatan Utd', division: 'LIGA SUPER', ovr: 101, rating: 1125, formation: '4-2-3-1', emblem: 'maung', primaryColor: '#1d4ed8', secondaryColor: '#ffffff', online: true, rewards: { budget: 18, xp: 60, tokens: 5, restPacks: 2, medKits: 1 } },
-            { id: 'pvp_3', managerName: 'SingoEdan_ID', clubName: 'Malang Raya FC', division: 'LIGA SUPER', ovr: 105, rating: 1240, formation: '3-5-2', emblem: 'singa', primaryColor: '#1e40af', secondaryColor: '#facc15', online: true, rewards: { budget: 25, xp: 80, tokens: 7, restPacks: 3, medKits: 2 } },
-            { id: 'pvp_4', managerName: 'BonekStrategi', clubName: 'Green Force 1927', division: 'LIGA KEJUARAAN', ovr: 91, rating: 960, formation: '4-4-2', emblem: 'bajul', primaryColor: '#15803d', secondaryColor: '#facc15', online: true, rewards: { budget: 9, xp: 35, tokens: 2, restPacks: 1, medKits: 1 } },
-            { id: 'pvp_5', managerName: 'MacanKemayoran', clubName: 'Jakarta Empire FC', division: 'LIGA SUPER', ovr: 108, rating: 1350, formation: '3-4-3', emblem: 'macan', primaryColor: '#b91c1c', secondaryColor: '#ffffff', online: true, rewards: { budget: 35, xp: 100, tokens: 10, restPacks: 4, medKits: 2 } },
-            { id: 'pvp_6', managerName: 'DewataCoach', clubName: 'Serdadu Tridatu Pro', division: 'LIGA NUSANTARA', ovr: 86, rating: 890, formation: '4-3-3', emblem: 'barong', primaryColor: '#ea580c', secondaryColor: '#ffffff', online: true, rewards: { budget: 7, xp: 30, tokens: 2, restPacks: 2, medKits: 0 } }
+        const DEFAULT_PVP_RIVALS = [
+            { playerId: 'pvp_101', managerName: 'Coach Dimas_JKT', clubName: 'Macan Kemayoran XI', league: 'LIGA SUPER', ovr: 103, rating: 1085, primaryColor: '#dc2626', secondaryColor: '#ffffff', emblem: 'macan', status: 'Online' },
+            { playerId: 'pvp_102', managerName: 'Kang_Asep_BDG', clubName: 'Maung Pasundan FC', league: 'LIGA SUPER', ovr: 105, rating: 1140, primaryColor: '#1d4ed8', secondaryColor: '#ffffff', emblem: 'maung', status: 'Online' },
+            { playerId: 'pvp_103', managerName: 'Cak_Budi_SBY', clubName: 'Green Force 1927', league: 'LIGA SUPER', ovr: 102, rating: 1045, primaryColor: '#15803d', secondaryColor: '#facc15', emblem: 'bajul', status: 'Online' },
+            { playerId: 'pvp_104', managerName: 'Bli_Komang_Bali', clubName: 'Serdadu Tridatu XI', league: 'LIGA SUPER', ovr: 101, rating: 1010, primaryColor: '#b91c1c', secondaryColor: '#ffffff', emblem: 'barong', status: 'Online' },
+            { playerId: 'pvp_105', managerName: 'Daeng_Rizal_MKS', clubName: 'Juku Eja Warriors', league: 'LIGA KEJUARAAN', ovr: 97, rating: 960, primaryColor: '#991b1b', secondaryColor: '#ffffff', emblem: 'jago', status: 'Online' },
+            { playerId: 'pvp_106', managerName: 'Sam_Rendy_MLG', clubName: 'Singo Edan United', league: 'LIGA SUPER', ovr: 104, rating: 1115, primaryColor: '#1e40af', secondaryColor: '#ef4444', emblem: 'singa', status: 'Online' }
         ];
 
-        let pvpOnlineList = DEFAULT_ONLINE_MANAGERS.map(m => ({ ...m, rewards: { ...m.rewards } }));
+        let pvpOnlineRivals = JSON.parse(JSON.stringify(DEFAULT_PVP_RIVALS));
         let pvpPortalSynced = false;
 
         function ensurePvpState() {
             if (!gameState.pvp || typeof gameState.pvp !== 'object') {
-                gameState.pvp = { rating: 1000, wins: 0, draws: 0, losses: 0, history: [] };
+                gameState.pvp = { rating: 1000, wins: 0, draws: 0, losses: 0, history: [], dailyRewardCount: 0, dailyRewardDate: '', rivalCooldowns: {} };
             }
             if (!Array.isArray(gameState.pvp.history)) gameState.pvp.history = [];
+            if (!gameState.pvp.rivalCooldowns || typeof gameState.pvp.rivalCooldowns !== 'object') gameState.pvp.rivalCooldowns = {};
+            const today = new Date().toISOString().slice(0, 10);
+            if (gameState.pvp.dailyRewardDate !== today) {
+                gameState.pvp.dailyRewardDate = today;
+                gameState.pvp.dailyRewardCount = 0;
+            }
         }
 
-        function getPvpTierName(rating) {
+        function getPvpTierLabel(rating) {
             if (rating >= 1400) return 'Legenda Nusantara';
             if (rating >= 1250) return 'Berlian';
-            if (rating >= 1100) return 'Emas';
-            if (rating >= 950) return 'Perak';
+            if (rating >= 1120) return 'Emas';
+            if (rating >= 980) return 'Perak';
             return 'Perunggu';
         }
 
-        function applyPortalPvpPlayers(payload) {
-            const list = Array.isArray(payload) ? payload : (Array.isArray(payload.players) ? payload.players : null);
-            if (list && list.length > 0) {
-                pvpOnlineList = list.map((p, idx) => {
-                    const ovr = Number(p.ovr || 95);
-                    const scale = Math.max(1, Math.round((ovr - 75) / 6));
-                    return {
-                        id: String(p.id || 'portal_pvp_' + idx),
-                        managerName: String(p.managerName || p.username || 'Manajer Online'),
-                        clubName: String(p.clubName || 'Klub Nusantara'),
-                        division: String(p.division || 'LIGA SUPER'),
-                        ovr,
-                        rating: Number(p.rating || 1000),
-                        formation: String(p.formation || '4-3-3'),
-                        emblem: String(p.emblem || 'garuda'),
-                        primaryColor: String(p.primaryColor || '#2563eb'),
-                        secondaryColor: String(p.secondaryColor || '#ffffff'),
-                        online: p.online !== false,
-                        rewards: p.rewards || {
-                            budget: 8 + scale * 4,
-                            xp: 30 + scale * 12,
-                            tokens: 2 + scale,
-                            restPacks: Math.max(1, Math.floor(scale / 2)),
-                            medKits: scale >= 3 ? 1 : 0
-                        }
-                    };
-                });
-                pvpPortalSynced = true;
-                renderPvpTab();
+        function getPvpMatchRewards(rival, outcome) {
+            const myOvr = getTeamAverageOVR();
+            const rivalOvr = Number(rival?.ovr || 98);
+            const upsetBonus = Math.max(0, rivalOvr - myOvr);
+            if (outcome === 'win') {
+                return {
+                    cash: Number((12 + upsetBonus * 1.5).toFixed(1)),
+                    xp: 55 + upsetBonus * 5,
+                    tokens: upsetBonus >= 3 ? 3 : 2,
+                    medKits: Math.random() < 0.5 ? 1 : 0,
+                    restPacks: 1,
+                    ratingDelta: 22 + Math.min(12, upsetBonus * 2)
+                };
             }
+            if (outcome === 'draw') {
+                return {
+                    cash: 5.0,
+                    xp: 25,
+                    tokens: 1,
+                    medKits: 0,
+                    restPacks: 0,
+                    ratingDelta: 4
+                };
+            }
+            return {
+                cash: 2.0,
+                xp: 12,
+                tokens: 0,
+                medKits: 0,
+                restPacks: 0,
+                ratingDelta: -14
+            };
+        }
+
+        function applyPortalPvpPlayers(payload) {
+            const list = Array.isArray(payload) ? payload : (Array.isArray(payload?.players) ? payload.players : null);
+            if (!list || list.length === 0) return;
+            pvpOnlineRivals = list.map((p, idx) => ({
+                playerId: p.playerId || p.id || `portal_pvp_${idx}`,
+                managerName: p.managerName || p.username || `Manajer #${idx + 1}`,
+                clubName: p.clubName || `${p.username || 'Garuda'} FC`,
+                league: p.league || 'LIGA SUPER',
+                ovr: Number(p.ovr || 98),
+                rating: Number(p.rating || 1000),
+                primaryColor: p.primaryColor || '#10b981',
+                secondaryColor: p.secondaryColor || '#ffffff',
+                emblem: p.emblem || 'garuda',
+                status: p.status || 'Online'
+            }));
+            pvpPortalSynced = true;
+            renderPvpTab();
+            showToast(`${pvpOnlineRivals.length} manajer online berhasil dimuat dari Portal!`, 'success');
         }
 
         function syncPortalPvpPlayers() {
             const sent = PortalSDK.requestPvpPlayers();
             if (sent) {
-                showToast('Menyegarkan daftar manajer online dari Portal Game...', 'info');
+                showToast('Mencari manajer online di Portal Game...', 'info');
             } else {
-                pvpOnlineList = [...pvpOnlineList].sort(() => Math.random() - 0.5);
+                // Acak variasi rating/status lawan online lokal
+                pvpOnlineRivals = pvpOnlineRivals.map(r => ({
+                    ...r,
+                    rating: Math.max(850, r.rating + Math.floor(Math.random() * 17) - 8)
+                })).sort(() => Math.random() - 0.5);
                 renderPvpTab();
-                showToast('Daftar lawan Arena PvP berhasil diperbarui!', 'success');
+                showToast('Daftar lawan PvP online diperbarui!', 'success');
             }
         }
         window.syncPortalPvpPlayers = syncPortalPvpPlayers;
 
-        function renderPvpTab() {
+        function challengePvpRival(playerId) {
             ensurePvpState();
-            const pState = gameState.pvp;
-            const setTxt = (id, v) => { const el = document.getElementById(id); if (el) el.innerText = v; };
-            setTxt('pvpMyRating', pState.rating);
-            setTxt('pvpMyTier', getPvpTierName(pState.rating));
-            setTxt('pvpMyRecord', `${pState.wins} - ${pState.draws} - ${pState.losses}`);
-            setTxt('pvpOnlineCount', pvpOnlineList.filter(r => r.online).length);
-
-            const badge = document.getElementById('pvpPortalSyncBadge');
-            if (badge) {
-                badge.innerText = pvpPortalSynced ? 'TERSINKRON PEMAIN PORTAL' : 'ARENA ONLINE AKTIF';
-                badge.className = pvpPortalSynced
-                    ? 'text-[10px] font-black bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 px-2.5 py-0.5 rounded-full'
-                    : 'text-[10px] font-black bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 px-2.5 py-0.5 rounded-full';
+            const rival = pvpOnlineRivals.find(r => String(r.playerId) === String(playerId));
+            if (!rival) return;
+            const now = Date.now();
+            const lastPlayed = Number(gameState.pvp.rivalCooldowns[rival.playerId] || 0);
+            const cooldownMs = 30 * 60 * 1000;
+            if (lastPlayed && (now - lastPlayed) < cooldownMs) {
+                const minsLeft = Math.ceil((cooldownMs - (now - lastPlayed)) / 60000);
+                showToast(`Lawan ini masih cooldown. Tunggu ${minsLeft} menit lagi untuk menantang ulang.`, 'warning');
+                return;
             }
-
-            const query = (document.getElementById('pvpSearchInput')?.value || '').trim().toLowerCase();
-            const filtered = pvpOnlineList.filter(r =>
-                !query || r.managerName.toLowerCase().includes(query) || r.clubName.toLowerCase().includes(query)
-            );
-
-            const grid = document.getElementById('pvpRivalsGrid');
-            if (grid) {
-                if (filtered.length === 0) {
-                    grid.innerHTML = '<div class="col-span-full text-center text-slate-400 py-6">Tidak ada manajer online yang cocok dengan pencarian Anda.</div>';
-                } else {
-                    grid.innerHTML = filtered.map(r => {
-                        const rw = r.rewards || {};
-                        const rewardBadges = [];
-                        if (rw.budget) rewardBadges.push(`+Rp ${rw.budget} M`);
-                        if (rw.xp) rewardBadges.push(`+${rw.xp} XP`);
-                        if (rw.tokens) rewardBadges.push(`+${rw.tokens} T`);
-                        if (rw.restPacks) rewardBadges.push(`+${rw.restPacks} Rest`);
-                        if (rw.medKits) rewardBadges.push(`+${rw.medKits} Medis`);
-                        return `
-                            <div class="bg-slate-900/95 border border-slate-800 hover:border-rose-500/50 rounded-2xl p-4 flex flex-col justify-between gap-3 transition shadow">
-                                <div class="space-y-2.5">
-                                    <div class="flex items-start justify-between gap-2">
-                                        <div class="flex items-center gap-2.5 min-w-0">
-                                            ${getCartoonEmblemSVG(r.emblem, r.primaryColor, r.secondaryColor, 'w-11 h-11')}
-                                            <div class="min-w-0">
-                                                <div class="font-outfit font-black text-sm text-white truncate">${escapeHTML(r.clubName)}</div>
-                                                <div class="text-[11px] text-slate-400 truncate"><i class="fa-solid fa-user-tie text-amber-400 mr-1"></i>${escapeHTML(r.managerName)}</div>
-                                            </div>
-                                        </div>
-                                        <span class="inline-flex items-center gap-1 text-[9px] font-black bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 px-2 py-0.5 rounded-full shrink-0">
-                                            <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span> ONLINE
-                                        </span>
-                                    </div>
-                                    <div class="flex flex-wrap items-center gap-1.5 text-[10px]">
-                                        <span class="bg-slate-950 border border-slate-800 text-amber-300 font-black px-2 py-0.5 rounded-lg">OVR ${r.ovr}</span>
-                                        <span class="bg-slate-950 border border-slate-800 text-cyan-300 font-bold px-2 py-0.5 rounded-lg">Rating ${r.rating}</span>
-                                        <span class="bg-slate-950 border border-slate-800 text-slate-300 font-semibold px-2 py-0.5 rounded-lg">${escapeHTML(r.formation)}</span>
-                                    </div>
-                                    <div class="bg-slate-950/80 border border-slate-800/90 rounded-xl p-2 space-y-1">
-                                        <div class="text-[9px] font-black text-emerald-400 uppercase tracking-wider">Hadiah Jika Menang:</div>
-                                        <div class="flex flex-wrap gap-1">
-                                            ${rewardBadges.map(b => `<span class="text-[10px] font-bold bg-slate-900 border border-slate-700 text-slate-200 px-1.5 py-0.5 rounded">${escapeHTML(b)}</span>`).join('')}
-                                        </div>
-                                    </div>
-                                </div>
-                                <button onclick="startPvpMatch('${escapeHTML(r.id)}')" class="w-full py-2.5 bg-gradient-to-r from-rose-500 to-amber-500 hover:from-rose-400 hover:to-amber-400 text-slate-950 font-black rounded-xl shadow transition flex items-center justify-center gap-1.5">
-                                    <i class="fa-solid fa-futbol"></i> Tantang Laga Live
-                                </button>
-                            </div>
-                        `;
-                    }).join('');
-                }
-            }
-
-            const histEl = document.getElementById('pvpHistoryList');
-            if (histEl) {
-                if (pState.history.length === 0) {
-                    histEl.innerHTML = '<div class="text-slate-500 italic">Belum ada pertandingan Arena PvP. Tantang manajer online di atas!</div>';
-                } else {
-                    histEl.innerHTML = pState.history.slice(0, 6).map(h => `
-                        <div class="flex flex-wrap items-center justify-between gap-2 bg-slate-900/80 border border-slate-800 px-3 py-2 rounded-xl">
-                            <span><strong class="${h.outcome === 'MENANG' ? 'text-emerald-400' : (h.outcome === 'IMBANG' ? 'text-amber-400' : 'text-rose-400')}">${h.outcome}</strong> vs <strong>${escapeHTML(h.rivalClub)}</strong> (${escapeHTML(h.rivalManager)}) — Skor <strong class="font-mono text-white">${h.score}</strong></span>
-                            <span class="text-[10px] text-cyan-300 font-bold">${escapeHTML(h.rewardSummary)}</span>
-                        </div>
-                    `).join('');
-                }
-            }
-        }
-        window.renderPvpTab = renderPvpTab;
-
-        function startPvpMatch(rivalId) {
-            const rival = pvpOnlineList.find(r => r.id === rivalId);
-            if (!rival) { showToast('Lawan PvP tidak ditemukan.', 'warning'); return; }
             const oppObj = {
-                id: rival.id,
+                id: rival.playerId,
                 name: rival.clubName,
                 coach: rival.managerName,
                 ovr: rival.ovr,
-                emblem: rival.emblem,
                 primaryColor: rival.primaryColor,
                 secondaryColor: rival.secondaryColor,
+                emblem: rival.emblem,
                 pattern: 'solid'
             };
             matchState.mode = 'pvp';
@@ -4392,98 +4241,366 @@
             matchState.pvpRival = rival;
             switchTab('match');
             initMatchSimulation(oppObj, `ARENA PvP ONLINE • VS ${rival.managerName.toUpperCase()}`);
+            showToast(`Memulai laga PvP melawan ${rival.managerName} (${rival.clubName})!`, 'info');
         }
-        window.startPvpMatch = startPvpMatch;
+        window.challengePvpRival = challengePvpRival;
 
         function resolvePvpMatchResult(h, a) {
             ensurePvpState();
-            const rival = matchState.pvpRival;
-            const rw = (rival && rival.rewards) || { budget: 10, xp: 40, tokens: 3, restPacks: 1, medKits: 0 };
-            let outcome = 'KALAH';
-            let ratingDelta = -12;
-            let earnedCash = 2.0, earnedXp = 15, earnedTokens = 0, earnedRest = 0, earnedMed = 0;
+            const rival = matchState.pvpRival || { playerId: 'pvp_ai', managerName: 'Manajer Rival', clubName: matchState.opponent?.name || 'Klub Rival', ovr: 98 };
+            const outcome = h > a ? 'win' : (h === a ? 'draw' : 'loss');
+            const rew = getPvpMatchRewards(rival, outcome);
+            const quotaRemaining = Math.max(0, 5 - Number(gameState.pvp.dailyRewardCount || 0));
+            const hasRewardQuota = quotaRemaining > 0;
 
-            if (h > a) {
-                outcome = 'MENANG';
-                gameState.pvp.wins++;
-                ratingDelta = 25;
-                earnedCash = Number(rw.budget || 10);
-                earnedXp = Number(rw.xp || 40);
-                earnedTokens = Number(rw.tokens || 3);
-                earnedRest = Number(rw.restPacks || 1);
-                earnedMed = Number(rw.medKits || 0);
-            } else if (h === a) {
-                outcome = 'IMBANG';
-                gameState.pvp.draws++;
-                ratingDelta = 5;
-                earnedCash = Number(((rw.budget || 10) * 0.45).toFixed(1));
-                earnedXp = Math.round((rw.xp || 40) * 0.5);
-                earnedTokens = Math.max(1, Math.floor((rw.tokens || 2) / 2));
-            } else {
-                gameState.pvp.losses++;
+            gameState.pvp.rivalCooldowns[rival.playerId] = Date.now();
+            gameState.pvp.rating = Math.max(500, gameState.pvp.rating + rew.ratingDelta);
+            if (outcome === 'win') gameState.pvp.wins++;
+            else if (outcome === 'draw') gameState.pvp.draws++;
+            else gameState.pvp.losses++;
+
+            let rewardSummary = 'Kuota hadiah harian habis (5/5) — Rating tetap dihitung';
+            if (hasRewardQuota) {
+                gameState.pvp.dailyRewardCount = Number(gameState.pvp.dailyRewardCount || 0) + 1;
+                gameState.manager.budget = Number((gameState.manager.budget + rew.cash).toFixed(1));
+                gameState.manager.xp += rew.xp;
+                gameState.manager.tokens += rew.tokens;
+                gameState.manager.medKits += rew.medKits;
+                gameState.manager.restPacks += rew.restPacks;
+
+                const rewardParts = [`+Rp ${rew.cash} M`, `+${rew.xp} XP`];
+                if (rew.tokens > 0) rewardParts.push(`+${rew.tokens} Token`);
+                if (rew.restPacks > 0) rewardParts.push(`+${rew.restPacks} Istirahat`);
+                if (rew.medKits > 0) rewardParts.push(`+${rew.medKits} Medis`);
+                rewardSummary = rewardParts.join(', ');
             }
 
-            gameState.pvp.rating = Math.max(500, gameState.pvp.rating + ratingDelta);
-            gameState.manager.budget = Number((gameState.manager.budget + earnedCash).toFixed(1));
-            gameState.manager.xp += earnedXp;
-            gameState.manager.tokens += earnedTokens;
-            gameState.manager.restPacks += earnedRest;
-            gameState.manager.medKits += earnedMed;
-
-            const parts = [`+Rp ${earnedCash} M`, `+${earnedXp} XP`];
-            if (earnedTokens) parts.push(`+${earnedTokens} T`);
-            if (earnedRest) parts.push(`+${earnedRest} Rest`);
-            if (earnedMed) parts.push(`+${earnedMed} Medis`);
-            const rewardSummary = parts.join(' • ');
+            const ratingText = rew.ratingDelta >= 0 ? `+${rew.ratingDelta}` : `${rew.ratingDelta}`;
+            const label = outcome === 'win' ? 'MENANG PvP!' : (outcome === 'draw' ? 'IMBANG PvP' : 'KALAH PvP');
 
             gameState.pvp.history.unshift({
-                rivalClub: rival ? rival.clubName : 'Klub Online',
-                rivalManager: rival ? rival.managerName : 'Manajer Online',
-                score: `${h}-${a}`,
+                rivalManager: rival.managerName,
+                rivalClub: rival.clubName,
+                score: `${h} - ${a}`,
                 outcome,
+                ratingText,
                 rewardSummary
             });
-            if (gameState.pvp.history.length > 15) gameState.pvp.history.pop();
+            gameState.pvp.history = gameState.pvp.history.slice(0, 10);
 
-            gameState.news.unshift(`Arena PvP: ${gameState.club.name} ${outcome} ${h}-${a} melawan ${rival ? rival.clubName : 'Manajer Online'} (${rewardSummary}).`);
-            showMatchBanner(`ARENA PvP • ${outcome}!`, `${gameState.club.name} ${h}-${a} ${rival ? rival.clubName : ''} | ${rewardSummary}`);
+            gameState.news.unshift(`Arena PvP: ${gameState.club.name} ${h}-${a} ${rival.clubName} (${rival.managerName}) • Rating ${ratingText}.`);
+            showMatchBanner(`${label} (${ratingText} Rating)`, hasRewardQuota ? `Hadiah: ${rewardSummary}` : 'Kuota hadiah harian (5/5) tercapai');
+
             PortalSDK.reportPvpResult({
-                rivalId: rival?.id,
-                rivalManager: rival?.managerName,
-                scoreHome: h,
-                scoreAway: a,
+                opponentId: rival.playerId,
+                opponentManager: rival.managerName,
+                homeScore: h,
+                awayScore: a,
                 outcome,
-                newRating: gameState.pvp.rating,
-                rewards: { budget: earnedCash, xp: earnedXp, tokens: earnedTokens, restPacks: earnedRest, medKits: earnedMed }
+                newRating: gameState.pvp.rating
             });
-            renderPvpTab();
         }
 
-        /* ===================================================
-           9. BOOTSTRAP ON WINDOW LOAD
-           =================================================== */
-        window.onload = function () {
-            try {
-                populateEmblemDropdowns();
-                loadGameData();
-                ensureAllDivisionsState(false);
-                if (!gameState.cup || !Array.isArray(gameState.cup.opponents) || gameState.cup.opponents.includes(gameState.club.name)) {
-                    resetCupState();
-                }
-                ensureTournamentsState(false);
-                selectedStandingsDivision = gameState.club.league || 'LIGA SUPER';
-                updateUIHeader();
-                renderDashboard();
-                renderStandingsTab();
-                renderSquadTab();
-                PortalSDK.init();
-                resizeCanvas();
-                requestAnimationFrame(gameLoop);
-            } catch (err) {
-                console.error('Bootstrap error:', err);
-                showToast('Memuat ulang pengaturan awal game...', 'warning');
+        function renderPvpTab() {
+            ensurePvpState();
+            const syncBadge = document.getElementById('pvpPortalSyncBadge');
+            if (syncBadge) {
+                syncBadge.innerText = pvpPortalSynced ? 'TERSINKRON PORTAL' : 'ARENA AKTIF';
             }
-        };
+            const setTxt = (id, val) => { const el = document.getElementById(id); if (el) el.innerText = val; };
+            setTxt('pvpMyRating', gameState.pvp.rating);
+            setTxt('pvpMyTier', getPvpTierLabel(gameState.pvp.rating));
+            setTxt('pvpMyRecord', `${gameState.pvp.wins} - ${gameState.pvp.draws} - ${gameState.pvp.losses}`);
+            const quotaLeft = Math.max(0, 5 - Number(gameState.pvp.dailyRewardCount || 0));
+            setTxt('pvpDailyQuota', `${quotaLeft} / 5`);
+            setTxt('pvpOnlineCount', pvpOnlineRivals.length);
+
+            const q = (document.getElementById('pvpSearchInput')?.value || '').trim().toLowerCase();
+            const filtered = pvpOnlineRivals.filter(r => !q || r.managerName.toLowerCase().includes(q) || r.clubName.toLowerCase().includes(q));
+
+            const grid = document.getElementById('pvpRivalsGrid');
+            if (grid) {
+                if (filtered.length === 0) {
+                    grid.innerHTML = '<div class="col-span-full text-center py-6 text-slate-400">Tidak ditemukan manajer lawan yang cocok.</div>';
+                } else {
+                    const now = Date.now();
+                    const cooldownMs = 30 * 60 * 1000;
+                    grid.innerHTML = filtered.map(r => {
+                        const winRew = getPvpMatchRewards(r, 'win');
+                        const lastPlayed = Number(gameState.pvp.rivalCooldowns[r.playerId] || 0);
+                        const onCooldown = lastPlayed && (now - lastPlayed) < cooldownMs;
+                        const minsLeft = onCooldown ? Math.ceil((cooldownMs - (now - lastPlayed)) / 60000) : 0;
+                        return `
+                            <div class="bg-slate-900/95 border border-slate-800 hover:border-rose-500/50 rounded-2xl p-4 flex flex-col justify-between gap-3 transition">
+                                <div class="flex items-start justify-between gap-2.5">
+                                    <div class="flex items-center gap-2.5 min-w-0">
+                                        ${getCartoonEmblemSVG(r.emblem, r.primaryColor, r.secondaryColor, 'w-11 h-11')}
+                                        <div class="min-w-0">
+                                            <div class="flex items-center gap-1.5">
+                                                <span class="w-2 h-2 rounded-full bg-emerald-400 shrink-0"></span>
+                                                <span class="font-outfit font-black text-sm text-white truncate">${escapeHTML(r.managerName)}</span>
+                                            </div>
+                                            <div class="text-[11px] font-bold text-slate-300 truncate">${escapeHTML(r.clubName)}</div>
+                                            <div class="text-[10px] text-slate-400">${escapeHTML(r.league)} • Rating <strong class="text-amber-400">${r.rating}</strong></div>
+                                        </div>
+                                    </div>
+                                    <span class="px-2 py-0.5 rounded-lg bg-rose-500/20 text-rose-300 border border-rose-500/30 font-black text-[11px] shrink-0">OVR ${r.ovr}</span>
+                                </div>
+                                <div class="bg-slate-950/80 border border-slate-800 rounded-xl px-2.5 py-2 text-[11px] flex items-center justify-between">
+                                    <span class="text-slate-400">Hadiah Menang:</span>
+                                    <span class="font-bold text-emerald-300">+Rp ${winRew.cash} M • +${winRew.tokens} T • +1 Rest</span>
+                                </div>
+                                <button onclick="challengePvpRival('${escapeHTML(r.playerId)}')" ${onCooldown ? 'disabled' : ''} class="w-full py-2.5 px-3 font-black rounded-xl transition flex items-center justify-center gap-1.5 ${onCooldown ? 'bg-slate-800 text-slate-500 cursor-not-allowed' : 'bg-rose-600 hover:bg-rose-500 text-white shadow'}">
+                                    <i class="fa-solid ${onCooldown ? 'fa-clock' : 'fa-futbol'}"></i>
+                                    <span>${onCooldown ? `Cooldown (${minsLeft} mnt)` : 'Tantang Sekarang'}</span>
+                                </button>
+                            </div>`;
+                    }).join('');
+                }
+            }
+
+            const histEl = document.getElementById('pvpHistoryList');
+            if (histEl) {
+                if (gameState.pvp.history.length === 0) {
+                    histEl.innerHTML = '<div class="text-slate-500">Belum ada pertandingan PvP. Pilih lawan di atas untuk memulai tantangan pertama!</div>';
+                } else {
+                    histEl.innerHTML = gameState.pvp.history.map(item => {
+                        const badgeCls = item.outcome === 'win'
+                            ? 'bg-emerald-500/20 text-emerald-300'
+                            : (item.outcome === 'draw' ? 'bg-amber-500/20 text-amber-300' : 'bg-rose-500/20 text-rose-300');
+                        return `
+                            <div class="flex flex-wrap items-center justify-between gap-2 bg-slate-900/90 border border-slate-800 rounded-xl px-3 py-2">
+                                <div class="flex items-center gap-2">
+                                    <span class="px-2 py-0.5 rounded font-black text-[10px] ${badgeCls}">${escapeHTML(item.score)}</span>
+                                    <span class="font-bold text-white">vs ${escapeHTML(item.rivalClub)}</span>
+                                    <span class="text-slate-400 text-[11px]">(${escapeHTML(item.rivalManager)})</span>
+                                </div>
+                                <div class="text-[11px] font-bold text-amber-400">Rating ${escapeHTML(item.ratingText)} • <span class="text-emerald-300">${escapeHTML(item.rewardSummary)}</span></div>
+                            </div>`;
+                    }).join('');
+                }
+            }
+        }
+
+        /* Club Settings */
+        function populateSettingsForm() {
+            const embSel = document.getElementById('setClubEmblem');
+            if (embSel) {
+                embSel.innerHTML = EMBLEM_OPTIONS.map(o => `<option value="${o.id}">${o.label}</option>`).join('');
+                embSel.value = gameState.club.emblem || 'garuda';
+            }
+            document.getElementById('setClubName').value = gameState.club.name;
+            document.getElementById('setManagerName').value = gameState.manager.name;
+            document.getElementById('setClubCity').value = gameState.club.city;
+            document.getElementById('setClubStadium').value = gameState.club.stadium;
+            document.getElementById('setJerseyPattern').value = gameState.club.pattern || 'solid';
+            document.getElementById('setPrimaryColor').value = gameState.club.primaryColor || '#dc2626';
+            document.getElementById('setSecondaryColor').value = gameState.club.secondaryColor || '#ffffff';
+            updateSettingsEmblemPreview();
+        }
+
+        function updateSettingsEmblemPreview() {
+            const emb = document.getElementById('setClubEmblem')?.value || gameState.club.emblem;
+            const c1 = document.getElementById('setPrimaryColor')?.value || gameState.club.primaryColor;
+            const c2 = document.getElementById('setSecondaryColor')?.value || gameState.club.secondaryColor;
+            const prev = document.getElementById('settingsEmblemPreview');
+            if (prev) prev.innerHTML = getCartoonEmblemSVG(emb, c1, c2, 'w-20 h-20', gameState.club.customEmblem);
+        }
+        window.updateSettingsEmblemPreview = updateSettingsEmblemPreview;
+
+        function saveClubSettings() {
+            const oldName = gameState.club.name;
+            gameState.club.name = document.getElementById('setClubName').value.trim() || gameState.club.name;
+            gameState.manager.name = document.getElementById('setManagerName').value.trim() || gameState.manager.name;
+            gameState.club.city = document.getElementById('setClubCity').value.trim() || gameState.club.city;
+            gameState.club.stadium = document.getElementById('setClubStadium').value.trim() || gameState.club.stadium;
+            gameState.club.emblem = document.getElementById('setClubEmblem').value || gameState.club.emblem;
+            gameState.club.pattern = document.getElementById('setJerseyPattern').value || 'solid';
+            gameState.club.primaryColor = document.getElementById('setPrimaryColor').value || '#dc2626';
+            gameState.club.secondaryColor = document.getElementById('setSecondaryColor').value || '#ffffff';
+
+            const tbl = getActiveLeagueTable();
+            const row = tbl.find(t => t.main || t.name === oldName);
+            if (row) {
+                row.name = gameState.club.name;
+                row.coach = gameState.manager.name;
+                row.emblem = gameState.club.emblem;
+                row.primaryColor = gameState.club.primaryColor;
+                row.secondaryColor = gameState.club.secondaryColor;
+                row.pattern = gameState.club.pattern;
+            }
+            updateUIHeader(); renderDashboard(); saveGameData(true);
+        }
+        window.saveClubSettings = saveClubSettings;
+
+        /* ===================================================
+           8. MODAL PILIH KLUB / BANGUN TIM DARI NOL (81 KLUB)
+           =================================================== */
+        let selectedCareerDiv = 'LIGA SUPER';
+        let selectedCareerClubId = 'persija';
+
+        function openCareerModal() {
+            pendingCustomEmblems = { existing: null, scratch: null };
+            const sEmb = document.getElementById('scratchEmblem');
+            if (sEmb) sEmb.innerHTML = EMBLEM_OPTIONS.map(o => `<option value="${o.id}">${o.label}</option>`).join('');
+            filterCareerDivision(selectedCareerDiv);
+            updateScratchPreview();
+            document.getElementById('careerModal').classList.remove('hidden');
+        }
+        function closeCareerModal() { document.getElementById('careerModal').classList.add('hidden'); }
+        window.openCareerModal = openCareerModal;
+        window.closeCareerModal = closeCareerModal;
+
+        function switchCareerModeTab(mode) {
+            const isEx = mode === 'existing';
+            document.getElementById('careerPanelExisting').classList.toggle('hidden', !isEx);
+            document.getElementById('careerPanelScratch').classList.toggle('hidden', isEx);
+            document.getElementById('careerTabExisting').className = isEx ? 'px-4 py-2 rounded-xl bg-emerald-500 text-slate-950 font-black' : 'px-4 py-2 rounded-xl bg-slate-800 text-slate-300';
+            document.getElementById('careerTabScratch').className = !isEx ? 'px-4 py-2 rounded-xl bg-emerald-500 text-slate-950 font-black' : 'px-4 py-2 rounded-xl bg-slate-800 text-slate-300';
+        }
+        window.switchCareerModeTab = switchCareerModeTab;
+
+        function filterCareerDivision(divName) {
+            selectedCareerDiv = divName;
+            document.querySelectorAll('.cdiv-btn').forEach(b => {
+                const active = b.dataset.cdiv === divName;
+                b.className = active ? 'cdiv-btn px-3 py-1.5 rounded-xl bg-amber-500 text-slate-950 font-black' : 'cdiv-btn px-3 py-1.5 rounded-xl bg-slate-800 text-slate-300';
+            });
+            const list = DIVISIONS_MAP[divName] || SUPER_LEAGUE_2026_CLUBS;
+            if (!list.some(c => c.id === selectedCareerClubId)) selectedCareerClubId = list[0].id;
+            renderCareerClubGrid();
+        }
+        window.filterCareerDivision = filterCareerDivision;
+
+        function selectCareerClub(cid) {
+            selectedCareerClubId = cid;
+            renderCareerClubGrid();
+        }
+        window.selectCareerClub = selectCareerClub;
+
+        function renderCareerClubGrid() {
+            const list = DIVISIONS_MAP[selectedCareerDiv] || SUPER_LEAGUE_2026_CLUBS;
+            const grid = document.getElementById('careerClubGrid');
+            if (!grid) return;
+            grid.innerHTML = list.map(c => {
+                const sel = c.id === selectedCareerClubId;
+                return `
+                    <button onclick="selectCareerClub('${c.id}')" class="text-left p-3 rounded-2xl border transition flex items-center gap-2.5 ${sel ? 'bg-emerald-950/60 border-emerald-400 ring-1 ring-emerald-400' : 'bg-slate-900 border-slate-800 hover:border-slate-600'}">
+                        ${getCartoonEmblemSVG(c.emblem, c.primaryColor, c.secondaryColor, 'w-10 h-10')}
+                        <div class="min-w-0 flex-1">
+                            <div class="font-outfit font-black text-white truncate">${escapeHTML(c.name)}</div>
+                            <div class="text-[10px] text-slate-400 truncate">Pelatih: ${escapeHTML(c.coach)}</div>
+                            <div class="text-[10px] text-amber-400 font-bold">OVR ${c.ovr} • Kas Rp ${c.budget} M</div>
+                        </div>
+                    </button>`;
+            }).join('');
+            updateExistingCareerPreview();
+        }
+
+        function updateExistingCareerPreview() {
+            const c = ALL_INDONESIAN_CLUBS.find(x => x.id === selectedCareerClubId) || SUPER_LEAGUE_2026_CLUBS[0];
+            const prev = document.getElementById('existingEmblemPreview');
+            if (prev) prev.innerHTML = getCartoonEmblemSVG(c.emblem, c.primaryColor, c.secondaryColor, 'w-12 h-12', pendingCustomEmblems.existing);
+        }
+
+        function updateScratchPreview() {
+            const emb = document.getElementById('scratchEmblem')?.value || 'garuda';
+            const c1 = document.getElementById('scratchColor1')?.value || '#dc2626';
+            const c2 = document.getElementById('scratchColor2')?.value || '#ffffff';
+            const prev = document.getElementById('scratchEmblemPreview');
+            if (prev) prev.innerHTML = getCartoonEmblemSVG(emb, c1, c2, 'w-16 h-16', pendingCustomEmblems.scratch);
+        }
+        window.updateScratchPreview = updateScratchPreview;
+
+        function startExistingClubCareer() {
+            const c = ALL_INDONESIAN_CLUBS.find(x => x.id === selectedCareerClubId) || SUPER_LEAGUE_2026_CLUBS[0];
+            const customCoach = document.getElementById('existingManagerInput')?.value.trim();
+            gameState.club = {
+                id: c.id, name: c.name, league: c.league, city: c.city, stadium: c.stadium,
+                primaryColor: c.primaryColor, secondaryColor: c.secondaryColor,
+                pattern: c.pattern || 'solid', emblem: c.emblem,
+                customEmblem: pendingCustomEmblems.existing || null
+            };
+            gameState.manager.name = customCoach || c.coach;
+            gameState.manager.budget = c.budget;
+            gameState.manager.tokens = 25;
+            gameState.manager.totalFines = 0;
+            gameState.season.week = 1;
+            gameState.squad = createSquadForClub(c);
+            ensureAllDivisionsState(true);
+            resetCupState();
+            ensureTournamentsState(true);
+            populateTransferMarket();
+            activeStandingsDivision = c.league;
+
+            closeCareerModal();
+            updateUIHeader(); renderDashboard(); renderStandingsTab(); saveGameData(false);
+            showToast(`Anda resmi melatih ${c.name} (${c.league})!`, 'success');
+        }
+        window.startExistingClubCareer = startExistingClubCareer;
+
+        function startScratchClubCareer() {
+            const name = document.getElementById('scratchClubName')?.value.trim() || 'Garuda Nusantara FC';
+            const coach = document.getElementById('scratchManagerName')?.value.trim() || 'Coach Nusantara';
+            const city = document.getElementById('scratchCity')?.value.trim() || 'Jakarta';
+            const stadium = document.getElementById('scratchStadium')?.value.trim() || 'Stadion Garuda';
+            const league = document.getElementById('scratchDivision')?.value || 'LIGA 4';
+            const tier = document.getElementById('scratchTier')?.value || 'pioneer';
+            const emblem = document.getElementById('scratchEmblem')?.value || 'garuda';
+            const c1 = document.getElementById('scratchColor1')?.value || '#dc2626';
+            const c2 = document.getElementById('scratchColor2')?.value || '#ffffff';
+
+            const baseOvr = tier === 'ambitious' ? 94 : 82;
+            const startBudget = tier === 'ambitious' ? 120 : 45;
+
+            gameState.club = {
+                id: 'USER_CUSTOM', name, league, city, stadium,
+                primaryColor: c1, secondaryColor: c2, pattern: 'solid',
+                emblem, customEmblem: pendingCustomEmblems.scratch || null
+            };
+            gameState.manager.name = coach;
+            gameState.manager.budget = startBudget;
+            gameState.manager.tokens = 30;
+            gameState.manager.totalFines = 0;
+            gameState.season.week = 1;
+            gameState.squad = createSquadForClub({ id: 'custom', name, ovr: baseOvr }, baseOvr);
+            ensureAllDivisionsState(true);
+            resetCupState();
+            ensureTournamentsState(true);
+            populateTransferMarket();
+            activeStandingsDivision = league;
+
+            closeCareerModal();
+            updateUIHeader(); renderDashboard(); renderStandingsTab(); saveGameData(false);
+            showToast(`Klub baru ${name} berhasil didirikan di ${league}!`, 'success');
+        }
+        window.startScratchClubCareer = startScratchClubCareer;
+
+        /* ===================================================
+           9. BOOTSTRAP & INITIALIZATION
+           =================================================== */
+        document.addEventListener('DOMContentLoaded', () => {
+            loadGameData();
+            ensureAllDivisionsState(false);
+            ensureTournamentsState(false);
+            if (!gameState.transferMarket.length) populateTransferMarket();
+            activeStandingsDivision = gameState.club.league || 'LIGA SUPER';
+
+            updateUIHeader();
+            renderDashboard();
+            renderStandingsTab();
+            renderTournamentsPanel();
+            renderShopTab();
+            renderPvpTab();
+            PortalSDK.init();
+
+            const nextOpp = getNextLeagueOpponent();
+            matchState.mode = 'league';
+            initMatchSimulation(nextOpp, `${gameState.club.league} • PEKAN ${gameState.season.week}`, false);
+
+            lastFrameTime = performance.now();
+            requestAnimationFrame(gameLoop);
+        });
     </script>
 </body>
 </html>
