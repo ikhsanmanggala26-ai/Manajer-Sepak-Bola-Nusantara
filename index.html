@@ -13,6 +13,24 @@
          - CrazyGames    : <script src="https://sdk.crazygames.com/crazygames-sdk-v3.js"></script>
          - GameMonetize  : <script src="https://api.gamemonetize.com/sdk.js"></script>
          ============================================================ -->
+    <script>
+        // GameZone ID - GameBridge SDK (Auto-Detect Item, Koin & Skor)
+        window.GameZoneSDK = {
+            registerMeta: function(meta) {
+                window.parent.postMessage({ source: "GameZoneGame", type: "REGISTER_GAME_META", payload: meta }, "*");
+            },
+            reportScore: function(score) {
+                window.parent.postMessage({ source: "GameZoneGame", type: "REPORT_SCORE", score: Number(score || 0) }, "*");
+            },
+            onItemGranted: function(callback) {
+                window.addEventListener("message", function(ev) {
+                    if (ev.data && ev.data.source === "GameZonePortal" && ev.data.type === "ITEM_GRANTED") {
+                        callback(ev.data);
+                    }
+                });
+            }
+        };
+    </script>
 
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
@@ -1127,6 +1145,32 @@
                         window.parent.postMessage({ source: 'GARUDA_MANAGER_GAME', type: 'GAME_SHOP_SYNC_REQUEST' }, '*');
                         window.parent.postMessage({ source: 'GARUDA_MANAGER_GAME', type: 'GAME_PVP_SYNC_REQUEST' }, '*');
                     }
+                    // Integrasi Resmi GameZone ID - GameBridge SDK
+                    if (window.GameZoneSDK) {
+                        const gzItems = (typeof portalShopCatalog !== 'undefined' && Array.isArray(portalShopCatalog))
+                            ? portalShopCatalog.filter(i => i.enabled !== false).map(i => ({
+                                id: i.sku,
+                                name: i.name,
+                                price: Number(i.price || 0),
+                                description: i.desc || i.name
+                            }))
+                            : [];
+                        window.GameZoneSDK.registerMeta({
+                            coinName: "Token Transfer",
+                            items: gzItems
+                        });
+                        window.GameZoneSDK.onItemGranted(function(data) {
+                            const p = (data && data.payload) || data || {};
+                            const grantedSku = p.id || p.itemId || p.sku || data.itemId || data.id || data.sku;
+                            if (grantedSku && typeof handlePortalPurchaseSuccess === 'function') {
+                                handlePortalPurchaseSuccess({
+                                    sku: String(grantedSku),
+                                    txId: p.txId || data.txId || ('GZ-' + Date.now()),
+                                    rewards: p.rewards || data.rewards || null
+                                });
+                            }
+                        });
+                    }
                 } catch (e) {}
             },
             purchaseBusy: false,
@@ -1203,6 +1247,9 @@
             },
             submitScore(score) {
                 try {
+                    if (window.GameZoneSDK && typeof window.GameZoneSDK.reportScore === 'function') {
+                        window.GameZoneSDK.reportScore(score);
+                    }
                     if (window.parent && window.parent !== window) {
                         window.parent.postMessage({ source: 'GARUDA_MANAGER_GAME', type: 'SCORE_SUBMIT', payload: { score } }, '*');
                     }
