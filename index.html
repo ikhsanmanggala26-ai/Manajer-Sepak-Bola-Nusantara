@@ -1155,10 +1155,24 @@
                                 description: i.desc || i.name
                             }))
                             : [];
-                        window.GameZoneSDK.registerMeta({
-                            coinName: "Token Transfer",
-                            items: gzItems
-                        });
+                        // Cegah loop refresh iframe: kirim registerMeta maksimal 1x per 30 detik
+                        let shouldRegisterMeta = true;
+                        try {
+                            const nowTs = Date.now();
+                            const lastTs = Number(sessionStorage.getItem('gz_meta_ts') || localStorage.getItem('gz_meta_ts') || 0);
+                            if (lastTs && (nowTs - lastTs) < 30000) {
+                                shouldRegisterMeta = false;
+                            } else {
+                                sessionStorage.setItem('gz_meta_ts', String(nowTs));
+                                localStorage.setItem('gz_meta_ts', String(nowTs));
+                            }
+                        } catch (e) {}
+                        if (shouldRegisterMeta) {
+                            window.GameZoneSDK.registerMeta({
+                                coinName: "Token Transfer",
+                                items: gzItems
+                            });
+                        }
                         window.GameZoneSDK.onItemGranted(function(data) {
                             const p = (data && data.payload) || data || {};
                             const grantedSku = p.id || p.itemId || p.sku || data.itemId || data.id || data.sku;
