@@ -947,6 +947,9 @@
                     <button onclick="resetAllSaveData()" class="px-4 py-2.5 bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-500/40 font-bold text-xs rounded-xl">
                         Reset Karier
                     </button>
+                    <button id="btnShowAdminPinBox" onclick="toggleAdminPinPrompt()" class="ml-auto px-3.5 py-2.5 bg-slate-900 hover:bg-slate-800 text-amber-400/90 border border-amber-500/30 font-bold text-xs rounded-xl transition flex items-center gap-1.5">
+                        <i class="fa-solid fa-key"></i> Admin Portal
+                    </button>
                 </div>
             </div>
 
@@ -1338,9 +1341,11 @@
                             if (Array.isArray(msg.shopItems) && msg.shopItems.length > 0) {
                                 applyGzInitShopItems(msg.shopItems);
                             }
-                            if (msg.role === 'admin' || msg.isAdmin === true || String(msg.email || '').toLowerCase() === 'admin@gamezone.id') {
+                            const roleStr = String(msg.role || msg.userRole || (msg.user && msg.user.role) || '').toLowerCase();
+                            const emailStr = String(msg.email || (msg.user && msg.user.email) || '').toLowerCase();
+                            if (roleStr === 'admin' || roleStr === 'superadmin' || msg.isAdmin === true || (msg.user && msg.user.isAdmin === true) || emailStr === 'admin@gamezone.id') {
                                 setPortalAdminAccess(true);
-                            } else if (msg.role && msg.role !== 'admin') {
+                            } else if (roleStr && roleStr !== 'admin') {
                                 setPortalAdminAccess(false);
                             }
                             return;
@@ -1395,6 +1400,7 @@
                     // Kirim GZ_REGISTER_ITEMS & GAME_READY ke Parent Portal
                     if (window.parent && window.parent !== window) {
                         window.parent.postMessage({ type: 'GZ_REGISTER_ITEMS', items: gzItems }, '*');
+                        window.parent.postMessage({ type: 'GZ_GET_INIT_DATA' }, '*');
                         window.parent.postMessage({ source: 'GARUDA_MANAGER_GAME', type: 'GAME_READY' }, '*');
                         window.parent.postMessage({ source: 'GARUDA_MANAGER_GAME', type: 'GAME_SHOP_SYNC_REQUEST' }, '*');
                         window.parent.postMessage({ source: 'GARUDA_MANAGER_GAME', type: 'GAME_PVP_SYNC_REQUEST' }, '*');
@@ -5248,18 +5254,27 @@
            11. PANEL PENGATURAN EKONOMI & ANTI-FARMING (KHUSUS ADMIN PORTAL)
            =================================================== */
         let portalUserIsAdmin = false;
+        let adminPinPromptOpen = false;
 
         function checkIsPortalAdmin() {
             if (portalUserIsAdmin) return true;
             try {
                 const params = new URLSearchParams(window.location.search);
-                if (params.get('admin') === '1' || params.get('role') === 'admin') {
+                if (params.get('admin') === '1' || params.get('isAdmin') === 'true' || ['admin', 'superadmin'].includes(String(params.get('role') || '').toLowerCase())) {
+                    portalUserIsAdmin = true;
+                    return true;
+                }
+                if (document.referrer && document.referrer.toLowerCase().includes('/admin')) {
                     portalUserIsAdmin = true;
                     return true;
                 }
                 const savedRole = localStorage.getItem('gz_user_role') || localStorage.getItem('user_role') || '';
                 const savedEmail = localStorage.getItem('gz_user_email') || localStorage.getItem('user_email') || '';
                 if (savedRole.toLowerCase() === 'admin' || savedEmail.toLowerCase() === 'admin@gamezone.id') {
+                    portalUserIsAdmin = true;
+                    return true;
+                }
+                if (gameState.economy && gameState.economy.adminUnlocked === true) {
                     portalUserIsAdmin = true;
                     return true;
                 }
@@ -5272,24 +5287,48 @@
             ensureDailyLimits();
             if (portalUserIsAdmin) {
                 gameState.economy.adminUnlocked = true;
+                adminPinPromptOpen = false;
             }
             renderEconomyAdminPanel();
         }
+
+        function toggleAdminPinPrompt() {
+            ensureDailyLimits();
+            if (checkIsPortalAdmin()) {
+                adminPinPromptOpen = false;
+                renderEconomyAdminPanel();
+                return;
+            }
+            adminPinPromptOpen = !adminPinPromptOpen;
+            renderEconomyAdminPanel();
+        }
+        window.toggleAdminPinPrompt = toggleAdminPinPrompt;
 
         function renderEconomyAdminPanel() {
             ensureDailyLimits();
             const wrapper = document.getElementById('ecoAdminSectionWrapper');
             const isAdmin = checkIsPortalAdmin();
+            const showWrapper = isAdmin || adminPinPromptOpen;
             if (wrapper) {
-                wrapper.classList.toggle('hidden', !isAdmin);
+                wrapper.classList.toggle('hidden', !showWrapper);
             }
-            if (!isAdmin) return;
+            if (!showWrapper) return;
 
             const eco = gameState.economy;
             const u = gameState.dailyUsage;
             const unlockBox = document.getElementById('ecoUnlockBox');
             const controlsPanel = document.getElementById('ecoControlsPanel');
             const lockBadge = document.getElementById('ecoLockBadge');
+
+            if (!isAdmin) {
+                if (unlockBox) unlockBox.classList.remove('hidden');
+                if (controlsPanel) controlsPanel.classList.add('hidden');
+                if (lockBadge) {
+                    lockBadge.className = 'text-[10px] font-black bg-amber-500/20 text-amber-300 border border-amber-500/40 px-2.5 py-1 rounded-full';
+                    lockBadge.innerHTML = '<i class="fa-solid fa-lock mr-1"></i> VERIFIKASI PIN ADMIN';
+                }
+                return;
+            }
 
             if (unlockBox) unlockBox.classList.add('hidden');
             if (controlsPanel) controlsPanel.classList.remove('hidden');
@@ -5319,14 +5358,16 @@
         }
 
         function unlockEconomyAdmin() {
-            if (!checkIsPortalAdmin()) return;
             ensureDailyLimits();
             const pin = (document.getElementById('ecoAdminPinInput')?.value || '').trim();
             if (pin === String(gameState.economy.adminPin || '2026')) {
+                portalUserIsAdmin = true;
+                adminPinPromptOpen = false;
                 gameState.economy.adminUnlocked = true;
+                try { localStorage.setItem('gz_user_role', 'admin'); } catch (e) {}
                 renderEconomyAdminPanel();
                 saveGameData(false);
-                showToast('Pengaturan Ekonomi terbuka!', 'success');
+                showToast('Pengaturan Ekonomi Admin Portal terbuka!', 'success');
             } else {
                 showToast('PIN Admin salah! (Default: 2026)', 'error');
             }
@@ -5334,9 +5375,14 @@
         window.unlockEconomyAdmin = unlockEconomyAdmin;
 
         function lockEconomyAdmin() {
+            portalUserIsAdmin = false;
+            adminPinPromptOpen = false;
+            gameState.economy.adminUnlocked = false;
+            try { localStorage.removeItem('gz_user_role'); } catch (e) {}
             const wrapper = document.getElementById('ecoAdminSectionWrapper');
             if (wrapper) wrapper.classList.add('hidden');
-            showToast('Panel Admin disembunyikan sementara (muat ulang halaman untuk membuka kembali).', 'info');
+            saveGameData(false);
+            showToast('Panel Admin dikunci dan disembunyikan kembali.', 'info');
         }
         window.lockEconomyAdmin = lockEconomyAdmin;
 
