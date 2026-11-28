@@ -103,6 +103,10 @@
                     <div class="flex items-center gap-1.5 flex-wrap">
                         <h1 id="headerClubName" class="font-outfit font-black text-sm sm:text-base text-white truncate">Persija Jakarta</h1>
                         <span id="headerLeagueBadge" class="text-[10px] font-black bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 px-2 py-0.5 rounded-full">LIGA SUPER</span>
+                        <span id="headerPortalStatus" class="text-[10px] font-bold bg-slate-800 text-slate-300 border border-slate-700 px-2 py-0.5 rounded-full flex items-center gap-1" title="Status Sinkronisasi Portal GZI">
+                            <span id="headerPortalDot" class="w-1.5 h-1.5 rounded-full bg-amber-400"></span>
+                            <span id="headerPortalText">Lokal</span>
+                        </span>
                     </div>
                     <div class="text-[11px] text-slate-400 flex items-center gap-2 truncate">
                         <span><i class="fa-solid fa-user-tie text-amber-400 mr-1"></i><span id="headerManagerName">Shin Tae-yong</span></span>
@@ -1241,6 +1245,7 @@
             init() {
                 this.connected = window.self !== window.top;
                 this.detectAdminContext();
+                if (typeof updatePortalStatusBadge === 'function') updatePortalStatusBadge();
                 try {
                     window.parent.postMessage({ type: 'GZ_GET_INIT_DATA' }, '*');
                     window.parent.postMessage({
@@ -1250,6 +1255,7 @@
                     }, '*');
 
                     window.addEventListener('message', (e) => {
+                        try {
                         const msg = e.data || {};
                         if (msg.type === 'GZ_PURCHASE_SUCCESS') {
                             const purchased = msg.item || msg.payload || {};
@@ -1272,6 +1278,7 @@
                         }
                         if (msg.type === 'GZ_INIT_DATA' || msg.type === 'PORTAL_USER_INFO') {
                             this.connected = true;
+                            if (typeof updatePortalStatusBadge === 'function') updatePortalStatusBadge();
                             const u = msg.user || msg.profile || msg.data || msg;
                             if (u && (u.username || u.id || u.userId)) {
                                 this.userProfile = {
@@ -1281,8 +1288,17 @@
                                     role: u.role || (u.isAdmin ? 'admin' : this.userProfile.role)
                                 };
                             }
-                            if (Array.isArray(msg.shopItems) && msg.shopItems.length && typeof applyPortalCatalogOverrides === 'function') {
-                                applyPortalCatalogOverrides(msg.shopItems);
+                            const cloudSaved = msg.savedProgress || msg.progress || msg.savedState || (msg.data && (msg.data.savedProgress || msg.data.progress || msg.data.savedState));
+                            if (cloudSaved && typeof applyPortalCloudSyncState === 'function') {
+                                applyPortalCloudSyncState(cloudSaved);
+                            }
+                            const portalItems = msg.shopItems || (msg.game && msg.game.shopItems) || (msg.data && msg.data.shopItems);
+                            if (Array.isArray(portalItems) && portalItems.length && typeof applyPortalCatalogOverrides === 'function') {
+                                applyPortalCatalogOverrides(portalItems);
+                            }
+                            const ownedInv = msg.inventory || (u && u.inventory);
+                            if (Array.isArray(ownedInv) && ownedInv.length && typeof restorePortalInventoryItems === 'function') {
+                                restorePortalInventoryItems(ownedInv);
                             }
                             if (typeof registerAllShopItemsToPortal === 'function') {
                                 registerAllShopItemsToPortal(true);
@@ -1291,6 +1307,16 @@
                                 this.setAdminAccess(true);
                             }
                             if (typeof renderShopTab === 'function') renderShopTab();
+                            return;
+                        }
+                        if (msg.type === 'GZ_LOAD_PROGRESS' || msg.type === 'PORTAL_SYNC_STATE') {
+                            const cloudSaved = msg.savedProgress || msg.progress || msg.payload || msg.data;
+                            if (cloudSaved && typeof applyPortalCloudSyncState === 'function') {
+                                applyPortalCloudSyncState(cloudSaved);
+                            }
+                        }
+                        } catch (err) {
+                            console.warn('[PortalSDK] Pesan diabaikan karena format tidak sesuai:', err);
                         }
                     });
                 } catch (e) {}
@@ -1298,38 +1324,92 @@
             detectAdminContext() {
                 try {
                     const params = new URLSearchParams(window.location.search);
-                    const ref = String(document.referrer || '').toLowerCase();
-                    if (
-                        params.get('admin') === '1' ||
-                        params.get('role') === 'admin' ||
-                        localStorage.getItem('gz_user_role') === 'admin' ||
-                        sessionStorage.getItem('msn_admin_session') === '1' ||
-                        ref.includes('/admin')
-                    ) {
-                        this.setAdminAccess(true);
+                    const isAdminParam = params.get('admin') === '1' || params.get('role') === 'admin';
+                    const isAdminStorage = localStorage.getItem('msn_portal_admin') === '1';
+                    if (isAdminParam || isAdminStorage) {
+                        this.isAdmin = true;
+                        this.userProfile.role = 'admin';
                     }
                 } catch (e) {}
             },
-            setAdminAccess(flag) {
-                this.isAdmin = !!flag;
+            setAdminAccess(enabled) {
+                this.isAdmin = Boolean(enabled);
+                this.userProfile.role = this.isAdmin ? 'admin' : 'player';
                 try {
-                    if (this.isAdmin) sessionStorage.setItem('msn_admin_session', '1');
-                    else sessionStorage.removeItem('msn_admin_session');
+                    if (this.isAdmin) localStorage.setItem('msn_portal_admin', '1');
+                    else localStorage.removeItem('msn_portal_admin');
                 } catch (e) {}
-                if (typeof refreshEconomyAdminVisibility === 'function') refreshEconomyAdminVisibility();
+                if (typeof refreshEconomyAdminVisibility === 'function') {
+                    refreshEconomyAdminVisibility();
+                }
             },
-            syncUserMeta(payload) {
+            syncUserMeta(metaPayload) {
                 try {
-                    window.parent.postMessage({ type: 'PORTAL_USER_META_SYNC', payload }, '*');
-                } catch (e) {}
-            },
-            syncCloudProgress(level, score) {
-                try {
+                    if (window.GameZoneSDK && typeof window.GameZoneSDK.registerMeta === 'function') {
+                        window.GameZoneSDK.registerMeta(metaPayload);
+                    }
                     window.parent.postMessage({
-                        type: 'GZ_SAVE_PROGRESS',
-                        progress: { level: Number(level || 1), score: Number(score || 0) }
+                        source: 'GameZoneGame',
+                        type: 'REGISTER_GAME_META',
+                        payload: metaPayload
                     }, '*');
                 } catch (e) {}
+            },
+            syncCloudProgress(level, score, extraData = null) {
+                try {
+                    const progressPayload = {
+                        level: Number(level || 1),
+                        score: Number(score || 0),
+                        updatedAt: Date.now(),
+                        ...(extraData || {})
+                    };
+                    if (window.GameZoneSDK && typeof window.GameZoneSDK.saveProgress === 'function') {
+                        window.GameZoneSDK.saveProgress(progressPayload);
+                    }
+                    window.parent.postMessage({
+                        type: 'GZ_SAVE_PROGRESS',
+                        progress: progressPayload
+                    }, '*');
+                } catch (e) {}
+            },
+            syncClubAndAdminToPortal(reason = 'manual_save') {
+                if (!gameState || !gameState.club || !gameState.manager) return;
+                const totalScore = (gameState.manager.xp || 0) + ((gameState.club.pts || 0) * 50) + ((gameState.week || 1) * 10);
+                const syncSnapshot = {
+                    reason,
+                    club: {
+                        id: gameState.club.id,
+                        name: gameState.club.name,
+                        division: gameState.club.division,
+                        city: gameState.club.city,
+                        stadium: gameState.club.stadium,
+                        coach: gameState.manager.name,
+                        emblem: gameState.club.emblem,
+                        customEmblem: gameState.club.customEmblem || null,
+                        jerseyPattern: gameState.club.jerseyPattern || 'solid',
+                        color1: gameState.club.color1,
+                        color2: gameState.club.color2,
+                        gkColor: gameState.club.gkColor,
+                        gkColor2: gameState.club.gkColor2,
+                        tokenShape: gameState.club.tokenShape || 'circle'
+                    },
+                    economyConfig: gameState.economy ? gameState.economy.config : null,
+                    shopItems: typeof buildPortalShopItemsPayload === 'function' ? buildPortalShopItemsPayload() : []
+                };
+                this.syncCloudProgress(gameState.manager.level || 1, totalScore, syncSnapshot);
+                this.syncUserMeta({
+                    source: 'manajer-sepak-bola-nusantara',
+                    reason,
+                    clubName: gameState.club.name,
+                    managerName: gameState.manager.name,
+                    division: gameState.club.division,
+                    customEmblem: gameState.club.customEmblem || null,
+                    economyConfig: syncSnapshot.economyConfig,
+                    updatedAt: Date.now()
+                });
+                if (typeof registerAllShopItemsToPortal === 'function') {
+                    registerAllShopItemsToPortal(true);
+                }
             },
             unlockAchievement(id, title, desc) {
                 try {
@@ -1367,7 +1447,7 @@
                         category: item.category || 'item',
                         rewards: item.rewards || null
                     });
-                    setTimeout(() => { this.purchaseBusy = false; }, 4000);
+                    setTimeout(() => { this.purchaseBusy = false; }, 1200);
                     return;
                 }
                 if (typeof onSuccess === 'function') {
@@ -1908,6 +1988,7 @@
                 },
                 economy: {
                     config: {
+                        adminPin: '2026',
                         portalMaxDaily: 3,
                         portalWinReq: 'win',
                         adMaxDaily: 3,
@@ -1916,9 +1997,8 @@
                         tourneyShuffleCost: 2,
                         tourneySimPct: 50,
                         pvpMaxDaily: 5,
-                        pvpLossReward: false,
-                        shopCurrencyMode: 'idr',
-                        adminPin: '2026'
+                        pvpLossReward: true,
+                        shopCurrencyMode: 'idr'
                     },
                     usage: {
                         date: new Date().toISOString().slice(0, 10),
@@ -1930,22 +2010,147 @@
                     }
                 },
                 news: [
-                    `RESMI: ${myClub.coach} ditunjuk sebagai Manajer Kepala baru ${myClub.name} untuk musim 2026/2027!`,
-                    `BURSA TRANSFER: Jendela transfer Liga Super, Kejuaraan, Nusantara & Liga 4 resmi dibuka.`
+                    `RESMI: ${myClub.coach} ditunjuk menakhodai ${myClub.name} untuk musim 2026/2027!`,
+                    'KOMDIS: Denda kartu kuning (Rp 0.5 M) & kartu merah (Rp 1.5 M) berlaku di semua kompetisi.',
+                    'BURSA TRANSFER: Sejumlah bintang Timnas Indonesia siap direkrut di bursa transfer.'
                 ]
             };
             return state;
         }
 
-        function saveGameData(notify = false) {
+        function saveGameData(notify = false, syncReason = null) {
             try {
-                localStorage.setItem(SAVE_KEY, JSON.stringify(gameState));
-                if (gameState && gameState.manager && gameState.club) {
-                    const totalScore = (gameState.manager.xp || 0) + ((gameState.club.pts || 0) * 50) + ((gameState.week || 1) * 10);
-                    PortalSDK.syncCloudProgress(gameState.manager.level || 1, totalScore);
+                try {
+                    localStorage.setItem(SAVE_KEY, JSON.stringify(gameState));
+                } catch (quotaErr) {
+                    const lightCopy = JSON.parse(JSON.stringify(gameState));
+                    if (lightCopy.club) lightCopy.club.customEmblem = null;
+                    if (lightCopy.clubs && lightCopy.club && lightCopy.clubs[lightCopy.club.id]) {
+                        lightCopy.clubs[lightCopy.club.id].customEmblem = null;
+                    }
+                    localStorage.setItem(SAVE_KEY, JSON.stringify(lightCopy));
                 }
-                if (notify) showToast('Progres karier berhasil disimpan.', 'success');
-            } catch (e) {}
+                if (gameState && gameState.manager && gameState.club) {
+                    if (syncReason) {
+                        PortalSDK.syncClubAndAdminToPortal(syncReason);
+                    } else {
+                        const totalScore = (gameState.manager.xp || 0) + ((gameState.club.pts || 0) * 50) + ((gameState.week || 1) * 10);
+                        PortalSDK.syncCloudProgress(gameState.manager.level || 1, totalScore);
+                    }
+                }
+                if (notify) showToast('Progres karier & sinkronisasi Portal berhasil disimpan.', 'success');
+            } catch (e) {
+                console.warn('Penyimpanan lokal tidak tersedia:', e);
+            }
+        }
+
+        function sanitizeGameState(state) {
+            if (!state || typeof state !== 'object') return createDefaultState('persija');
+            const fallback = createDefaultState('persija');
+            if (!state.clubs || typeof state.clubs !== 'object' || Object.keys(state.clubs).length === 0) {
+                state.clubs = fallback.clubs;
+            }
+            if (!state.club || !state.club.id) {
+                state.club = Object.values(state.clubs)[0] || fallback.club;
+            }
+            if (!state.clubs[state.club.id]) {
+                state.clubs[state.club.id] = { ...state.club };
+            }
+            state.manager = { ...fallback.manager, ...(state.manager || {}) };
+            state.manager.budget = Number.isFinite(Number(state.manager.budget)) ? Number(state.manager.budget) : fallback.manager.budget;
+            state.manager.tokens = Number.isFinite(Number(state.manager.tokens)) ? Number(state.manager.tokens) : fallback.manager.tokens;
+            state.manager.restPacks = Number.isFinite(Number(state.manager.restPacks)) ? Number(state.manager.restPacks) : fallback.manager.restPacks;
+            state.manager.medKits = Number.isFinite(Number(state.manager.medKits)) ? Number(state.manager.medKits) : fallback.manager.medKits;
+            state.manager.level = Math.max(1, Number(state.manager.level) || 1);
+            state.manager.xp = Math.max(0, Number(state.manager.xp) || 0);
+            state.week = Math.max(1, Number(state.week) || 1);
+
+            if (!Array.isArray(state.squad) || state.squad.length < 11) {
+                state.squad = generateSquadForClub(state.club);
+            }
+            state.squad.forEach((p, idx) => {
+                if (!p.id) p.id = `${state.club.id}_fix_${idx}`;
+                p.ovr = Number(p.ovr) || 85;
+                p.stamina = Number.isFinite(Number(p.stamina)) ? Number(p.stamina) : 95;
+                p.injuredWeeks = Number(p.injuredWeeks) || 0;
+                p.suspendedMatches = Number(p.suspendedMatches) || 0;
+            });
+
+            state.tactics = { ...fallback.tactics, ...(state.tactics || {}) };
+            state.facilities = { ...fallback.facilities, ...(state.facilities || {}) };
+            state.shop = { ...fallback.shop, ...(state.shop || {}) };
+            if (!Array.isArray(state.shop.claimedOneTime)) state.shop.claimedOneTime = [];
+            if (!Array.isArray(state.shop.ownedTokenShapes)) state.shop.ownedTokenShapes = ['circle'];
+            if (!Array.isArray(state.shop.purchaseHistory)) state.shop.purchaseHistory = [];
+            state.pvp = { ...fallback.pvp, ...(state.pvp || {}) };
+            if (!Array.isArray(state.pvp.history)) state.pvp.history = [];
+            if (!Array.isArray(state.news)) state.news = [...fallback.news];
+            if (!Array.isArray(state.transferMarket)) state.transferMarket = [];
+            return state;
+        }
+
+        function applyPortalCloudSyncState(cloudData) {
+            if (!cloudData || !gameState) return;
+            let changed = false;
+            if (cloudData.economyConfig && gameState.economy) {
+                Object.assign(gameState.economy.config, cloudData.economyConfig);
+                changed = true;
+            }
+            if (cloudData.club && gameState.club) {
+                const cc = cloudData.club;
+                if (cc.name) gameState.club.name = cc.name;
+                if (cc.division) gameState.club.division = cc.division;
+                if (cc.city) gameState.club.city = cc.city;
+                if (cc.stadium) gameState.club.stadium = cc.stadium;
+                if (cc.coach) {
+                    gameState.club.coach = cc.coach;
+                    gameState.manager.name = cc.coach;
+                }
+                if (cc.emblem) gameState.club.emblem = cc.emblem;
+                if (cc.customEmblem !== undefined) gameState.club.customEmblem = cc.customEmblem;
+                if (cc.jerseyPattern) gameState.club.jerseyPattern = cc.jerseyPattern;
+                if (cc.color1) gameState.club.color1 = cc.color1;
+                if (cc.color2) gameState.club.color2 = cc.color2;
+                if (cc.gkColor) gameState.club.gkColor = cc.gkColor;
+                if (cc.gkColor2) gameState.club.gkColor2 = cc.gkColor2;
+                if (cc.tokenShape) gameState.club.tokenShape = cc.tokenShape;
+                if (gameState.clubs && gameState.clubs[gameState.club.id]) {
+                    Object.assign(gameState.clubs[gameState.club.id], gameState.club);
+                }
+                changed = true;
+            }
+            if (changed) {
+                updateUIHeader();
+                renderDashboard();
+                saveGameData(false);
+            }
+        }
+
+        function restorePortalInventoryItems(invList) {
+            if (!Array.isArray(invList) || !gameState) return;
+            ensureShopPersistence();
+            let restored = false;
+            invList.forEach(entry => {
+                const sku = String(entry.itemId || entry.id || entry.sku || '');
+                if (!sku) return;
+                const catItem = shopState.catalog.find(c => c.sku === sku);
+                if (!catItem || !catItem.oneTime) return;
+                if (!gameState.shop.claimedOneTime.includes(sku)) {
+                    gameState.shop.claimedOneTime.push(sku);
+                    const rewards = catItem.rewards || {};
+                    if (rewards.vipPass) gameState.shop.vipPassActive = true;
+                    if (rewards.tokenShape && !gameState.shop.ownedTokenShapes.includes(rewards.tokenShape)) {
+                        gameState.shop.ownedTokenShapes.push(rewards.tokenShape);
+                        gameState.club.tokenShape = rewards.tokenShape;
+                    }
+                    restored = true;
+                }
+            });
+            if (restored) {
+                updateUIHeader();
+                renderShopTab();
+                saveGameData(false);
+            }
         }
 
         function loadGameData() {
@@ -1953,12 +2158,14 @@
                 const raw = localStorage.getItem(SAVE_KEY);
                 if (raw) {
                     const parsed = JSON.parse(raw);
-                    if (parsed && parsed.club && parsed.clubs && parsed.squad) {
-                        gameState = parsed;
+                    if (parsed && typeof parsed === 'object' && (parsed.club || parsed.clubs)) {
+                        gameState = sanitizeGameState(parsed);
                         return true;
                     }
                 }
-            } catch (e) {}
+            } catch (e) {
+                console.warn('Data tersimpan korup, membuat karier default baru:', e);
+            }
             gameState = createDefaultState('persija');
             return false;
         }
@@ -2093,8 +2300,8 @@
             if (newPin) c.adminPin = newPin;
             populateEconomyAdminForm();
             renderShopTab();
-            saveGameData(false);
-            showToast('Aturan ekonomi & batas harian tersimpan!', 'success');
+            saveGameData(false, 'admin_economy_save');
+            showToast('Aturan ekonomi & batas harian tersimpan & tersinkron ke Portal!', 'success');
         }
 
         function resetTodayEconomyCounters() {
@@ -2165,7 +2372,24 @@
         }
         window.switchTab = switchTab;
 
+        function updatePortalStatusBadge() {
+            const badge = document.getElementById('headerPortalStatus');
+            const dot = document.getElementById('headerPortalDot');
+            const txt = document.getElementById('headerPortalText');
+            if (!badge || !dot || !txt) return;
+            if (PortalSDK.connected) {
+                badge.className = 'text-[10px] font-bold bg-cyan-500/15 text-cyan-300 border border-cyan-500/40 px-2 py-0.5 rounded-full flex items-center gap-1';
+                dot.className = 'w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse';
+                txt.innerText = 'GZI Live';
+            } else {
+                badge.className = 'text-[10px] font-bold bg-slate-800 text-slate-400 border border-slate-700 px-2 py-0.5 rounded-full flex items-center gap-1';
+                dot.className = 'w-1.5 h-1.5 rounded-full bg-amber-400';
+                txt.innerText = 'Lokal';
+            }
+        }
+
         function updateUIHeader() {
+            updatePortalStatusBadge();
             const c = gameState.club;
             const m = gameState.manager;
             const emblemEl = document.getElementById('headerClubEmblem');
@@ -2281,6 +2505,7 @@
             subsLeft: 5,
             momentum: 50,
             showAiOverlay: false,
+            setPiece: null,
             ball: {
                 x: 50, y: 50, z: 0,
                 vx: 0, vy: 0,
@@ -2461,6 +2686,7 @@
             matchState.matchFine = 0;
             matchState.subsLeft = 5;
             matchState.momentum = 50;
+            matchState.setPiece = null;
 
             setupMatchPlayers();
             syncTacticSelectsFromState();
@@ -2610,6 +2836,7 @@
         }
 
         function resetPositionsAfterSetPiece(kickoffTeam = 'home') {
+            matchState.setPiece = null;
             matchState.players.forEach(p => {
                 p.x = p.baseX;
                 p.y = p.baseY;
@@ -2627,6 +2854,99 @@
                 matchState.ball.owner = starter;
                 matchState.ball.lastTeam = kickoffTeam;
                 matchState.ball.inFlight = false;
+            }
+        }
+
+        function triggerSetPiece(type, atkTeam, spotX, spotY) {
+            const defTeam = atkTeam === 'home' ? 'away' : 'home';
+            const atkClub = atkTeam === 'home' ? matchState.homeClub : matchState.awayClub;
+            const b = matchState.ball;
+
+            b.owner = null;
+            b.inFlight = false;
+            b.x = spotX;
+            b.y = spotY;
+            b.z = 0;
+            b.lastTeam = atkTeam;
+
+            const taker = matchState.players
+                .filter(p => p.team === atkTeam && !p.isGK && !p.red)
+                .sort((a, c) => c.ovr - a.ovr)[0] || matchState.players.find(p => p.team === atkTeam && !p.red);
+
+            const defGK = matchState.players.find(p => p.team === defTeam && p.isGK);
+            const targetGoalX = atkTeam === 'home' ? 97.5 : 2.5;
+            const defGoalX = atkTeam === 'home' ? 94.8 : 5.2;
+
+            if (defGK) {
+                defGK.x = defGoalX;
+                defGK.y = 50;
+                defGK.vx = 0;
+                defGK.vy = 0;
+                defGK.aiState = 'GK_GUARD';
+            }
+
+            if (taker) {
+                const offset = atkTeam === 'home' ? -2.2 : 2.2;
+                taker.x = clampVal(spotX + offset, 2, 98);
+                taker.y = clampVal(spotY, 4, 96);
+                taker.vx = 0;
+                taker.vy = 0;
+                taker.facingAngle = Math.atan2(50 - taker.y, targetGoalX - taker.x);
+                taker.aiState = type === 'penalty' ? 'PENALTY' : type === 'corner' ? 'CORNER' : 'FREE_KICK';
+            }
+
+            let boxSlot = 0;
+            matchState.players.forEach(p => {
+                if (p.red || p.isGK || (taker && p.id === taker.id)) return;
+                p.vx = 0;
+                p.vy = 0;
+                if (type === 'penalty') {
+                    const arcX = atkTeam === 'home' ? 78 : 22;
+                    p.x = arcX + ((boxSlot % 3) - 1) * 3.5;
+                    p.y = 18 + (boxSlot * 3.6) % 64;
+                    p.aiState = 'WAIT_PEN';
+                    boxSlot++;
+                } else if (type === 'corner') {
+                    const boxX = atkTeam === 'home' ? 89 : 11;
+                    p.x = boxX + ((boxSlot % 3) - 1) * 3.2;
+                    p.y = 34 + (boxSlot * 4.2) % 32;
+                    p.aiState = p.team === atkTeam ? 'BOX_RUN' : 'MARKING';
+                    boxSlot++;
+                } else {
+                    const distGoal = dist2D(spotX, spotY, targetGoalX, 50);
+                    if (p.team === defTeam && distGoal < 34 && boxSlot < 3) {
+                        const wallX = spotX + (targetGoalX - spotX) * 0.36;
+                        p.x = clampVal(wallX, 7, 93);
+                        p.y = clampVal(spotY + (50 - spotY) * 0.36 + (boxSlot - 1) * 2.4, 15, 85);
+                        p.aiState = 'WALL';
+                        boxSlot++;
+                    } else if (p.team === atkTeam && distGoal < 38) {
+                        p.x = clampVal(atkTeam === 'home' ? 85 : 15, 10, 90);
+                        p.y = clampVal(32 + (p.roleIdx * 4) % 36, 15, 85);
+                        p.aiState = 'SUPPORT';
+                    }
+                }
+            });
+
+            matchState.setPiece = {
+                type,
+                atkTeam,
+                spotX,
+                spotY,
+                taker,
+                timer: 1.05
+            };
+
+            if (type === 'penalty') {
+                playCrowdNoise('penalty');
+                showMatchBanner('TENDANGAN PENALTI!', `${atkClub.name} • Eksekutor: ${taker ? taker.name : 'Penyerang'}`);
+                addCommentary(matchState.minute, `PENALTI! Wasit menunjuk titik putih untuk ${atkClub.name}! ${taker ? taker.name : 'Eksekutor'} bersiap menendang.`, atkTeam === 'home' ? 'text-emerald-400 font-black' : 'text-rose-400 font-black');
+            } else if (type === 'corner') {
+                showMatchBanner('SEPAK POJOK!', `${atkClub.name} • ${taker ? taker.name : 'Pengumpan'}`);
+                addCommentary(matchState.minute, `Sepak pojok untuk ${atkClub.name}! ${taker ? taker.name : 'Pemain'} bersiap mengirim umpan silang dari sudut lapangan.`, 'text-cyan-300 font-bold');
+            } else {
+                showMatchBanner('TENDANGAN BEBAS!', `${atkClub.name} • ${taker ? taker.name : 'Eksekutor'}`);
+                addCommentary(matchState.minute, `Tendangan bebas untuk ${atkClub.name}! ${taker ? taker.name : 'Eksekutor'} mengambil ancang-ancang.`, 'text-amber-300 font-bold');
             }
         }
 
@@ -2671,6 +2991,53 @@
             const mentShift = tac.mentality === 'Sangat Menyerang' ? 12 : tac.mentality === 'Menyerang' ? 6 : tac.mentality === 'Bertahan' ? -6 : tac.mentality === 'Sangat Bertahan' ? -12 : 0;
             const pressFactor = tac.pressing === 'Tinggi' ? 1.28 : tac.pressing === 'Rendah' ? 0.78 : 1.0;
 
+            if (matchState.setPiece) {
+                const sp = matchState.setPiece;
+                sp.timer -= scaledDt;
+                b.x = sp.spotX;
+                b.y = sp.spotY;
+                b.z = 0;
+                if (sp.timer <= 0) {
+                    const atkTeam = sp.atkTeam;
+                    const taker = sp.taker;
+                    const targetGoalX = atkTeam === 'home' ? 97.5 : 2.5;
+                    matchState.setPiece = null;
+
+                    if (sp.type === 'penalty') {
+                        if (atkTeam === 'home') matchState.homeShots++;
+                        else matchState.awayShots++;
+                        const penY = 50 + (Math.random() < 0.86 ? (Math.random() * 14 - 7) : (Math.random() < 0.5 ? -11 : 11));
+                        launchBallFlight('penalty_shot', sp.spotX, sp.spotY, targetGoalX, penY, 0.28, 1.3, taker);
+                    } else if (sp.type === 'corner') {
+                        const receivers = matchState.players.filter(p => p.team === atkTeam && !p.isGK && !p.red && (!taker || p.id !== taker.id));
+                        const target = receivers.sort((a, c) => Math.abs(c.x - targetGoalX) - Math.abs(a.x - targetGoalX)).pop() || receivers[0];
+                        const crossX = atkTeam === 'home' ? 89 : 11;
+                        const crossY = target ? target.y : 50;
+                        launchBallFlight('corner_cross', sp.spotX, sp.spotY, crossX, crossY, 0.52, 3.6, target);
+                    } else {
+                        const distGoal = dist2D(sp.spotX, sp.spotY, targetGoalX, 50);
+                        if (distGoal < 35) {
+                            if (atkTeam === 'home') matchState.homeShots++;
+                            else matchState.awayShots++;
+                            const fkY = 50 + (Math.random() * 18 - 9);
+                            launchBallFlight('freekick_shot', sp.spotX, sp.spotY, targetGoalX, fkY, 0.36, 2.4, taker);
+                        } else {
+                            const teammates = matchState.players.filter(p => p.team === atkTeam && !p.red && (!taker || p.id !== taker.id));
+                            const target = teammates[Math.floor(Math.random() * teammates.length)];
+                            if (target) {
+                                launchBallFlight('pass', sp.spotX, sp.spotY, target.x, target.y, 0.42, 2.2, target);
+                            } else if (taker) {
+                                b.owner = taker;
+                            }
+                        }
+                    }
+                    updateMatchStatsUI();
+                }
+                const hud = document.getElementById('engineCoordHUD');
+                if (hud) hud.innerText = `BOLA (${Math.round(b.x)}, ${Math.round(b.y)}) Z:${b.z.toFixed(1)}`;
+                return;
+            }
+
             if (b.inFlight) {
                 b.flightT += scaledDt / Math.max(0.18, b.flightDur);
                 const prog = clampVal(b.flightT, 0, 1);
@@ -2681,10 +3048,18 @@
                 if (prog >= 1) {
                     b.inFlight = false;
                     b.z = 0;
-                    if (b.flightType === 'pass') {
+                    if (b.flightType === 'pass' || b.flightType === 'corner_cross') {
                         if (b.targetPlayer && !b.targetPlayer.red) {
                             b.owner = b.targetPlayer;
                             b.lastTeam = b.targetPlayer.team;
+                            if (b.flightType === 'corner_cross' && Math.random() < 0.58) {
+                                const atkTeam = b.targetPlayer.team;
+                                const goalX = atkTeam === 'home' ? 97.5 : 2.5;
+                                if (atkTeam === 'home') matchState.homeShots++;
+                                else matchState.awayShots++;
+                                launchBallFlight('shot', b.targetPlayer.x, b.targetPlayer.y, goalX, 50 + (Math.random() * 16 - 8), 0.28, 1.5, b.targetPlayer);
+                                updateMatchStatsUI();
+                            }
                         } else {
                             let nearest = null, bestD = 999;
                             matchState.players.forEach(p => {
@@ -2695,7 +3070,7 @@
                             b.owner = nearest;
                             if (nearest) b.lastTeam = nearest.team;
                         }
-                    } else if (b.flightType === 'shot') {
+                    } else if (b.flightType === 'shot' || b.flightType === 'penalty_shot' || b.flightType === 'freekick_shot') {
                         const atkTeam = b.lastTeam;
                         const defTeam = atkTeam === 'home' ? 'away' : 'home';
                         const defGK = matchState.players.find(p => p.team === defTeam && p.isGK);
@@ -2709,7 +3084,12 @@
                             if (atkTeam === 'home') matchState.homeOnTarget++;
                             else matchState.awayOnTarget++;
 
-                            const goalChance = clampVal(0.28 + (atkOvr - gkOvr) * 0.012, 0.14, 0.48);
+                            const baseChance = b.flightType === 'penalty_shot'
+                                ? 0.76 + (atkOvr - gkOvr) * 0.006
+                                : b.flightType === 'freekick_shot'
+                                    ? 0.34 + (atkOvr - gkOvr) * 0.01
+                                    : 0.28 + (atkOvr - gkOvr) * 0.012;
+                            const goalChance = clampVal(baseChance, 0.14, 0.88);
                             if (Math.random() < goalChance) {
                                 if (atkTeam === 'home') {
                                     matchState.homeScore++;
@@ -2721,16 +3101,22 @@
                                     document.getElementById('matchAwayScore').innerText = matchState.awayScore;
                                 }
                                 playGoalSound();
-                                showMatchBanner('GOOOL!', `${shooter ? shooter.name : 'Penyerang'} #${shooter ? shooter.num : 9}`);
-                                addCommentary(matchState.minute, `GOOOL! Tendangan terukur ${shooter ? shooter.name : 'penyerang'} menggetarkan jala gawang!`, atkTeam === 'home' ? 'text-emerald-400 font-black' : 'text-rose-400 font-black');
+                                const goalLabel = b.flightType === 'penalty_shot'
+                                    ? 'GOOOL PENALTI!'
+                                    : b.flightType === 'freekick_shot'
+                                        ? 'GOOOL TENDANGAN BEBAS!'
+                                        : 'GOOOL!';
+                                showMatchBanner(goalLabel, `${shooter ? shooter.name : 'Penyerang'} #${shooter ? shooter.num : 9}`);
+                                addCommentary(matchState.minute, `${goalLabel} Eksekusi ${shooter ? shooter.name : 'penyerang'} menggetarkan jala gawang!`, atkTeam === 'home' ? 'text-emerald-400 font-black' : 'text-rose-400 font-black');
                                 resetPositionsAfterSetPiece(defTeam);
                             } else {
-                                if (Math.random() < 0.36) {
+                                if (b.flightType !== 'penalty_shot' && Math.random() < 0.36) {
                                     if (atkTeam === 'home') matchState.homeCorners++;
                                     else matchState.awayCorners++;
-                                    addCommentary(matchState.minute, `Penyelamatan gemilang kiper! Tendangan sudut untuk ${atkTeam === 'home' ? matchState.homeClub.name : matchState.awayClub.name}.`, 'text-cyan-300');
-                                }
-                                if (defGK) {
+                                    const cornerX = atkTeam === 'home' ? 98.5 : 1.5;
+                                    const cornerY = b.flightEnd.y < 50 ? 2.0 : 98.0;
+                                    triggerSetPiece('corner', atkTeam, cornerX, cornerY);
+                                } else if (defGK) {
                                     b.x = defGK.x; b.y = defGK.y;
                                     b.owner = defGK;
                                     b.lastTeam = defTeam;
@@ -2827,6 +3213,9 @@
                             if (Math.random() < foulProb) {
                                 playWhistle();
                                 playCrowdNoise('foul');
+                                const foulX = clampVal(b.x, 6, 94);
+                                const foulY = clampVal(b.y, 8, 92);
+                                const atkTeam = p.team === 'home' ? 'away' : 'home';
                                 if (!p.yellow) {
                                     p.yellow = true;
                                     if (p.team === 'home') {
@@ -2835,6 +3224,7 @@
                                     } else {
                                         matchState.awayYellow++;
                                     }
+                                    showMatchBanner('KARTU KUNING!', `${p.name} (#${p.num})`);
                                     addCommentary(matchState.minute, `Kartu Kuning untuk ${p.name} setelah melakukan pelanggaran keras!`, 'text-amber-400 font-bold');
                                 } else {
                                     p.red = true;
@@ -2846,6 +3236,16 @@
                                     }
                                     showMatchBanner('KARTU MERAH!', `${p.name} Diusir Keluar`);
                                     addCommentary(matchState.minute, `KARTU MERAH! ${p.name} diusir wasit akibat kartu kuning kedua!`, 'text-rose-400 font-black');
+                                }
+
+                                const inPenaltyBox = (atkTeam === 'home' && foulX >= 84 && Math.abs(foulY - 50) <= 26)
+                                    || (atkTeam === 'away' && foulX <= 16 && Math.abs(foulY - 50) <= 26);
+
+                                if (inPenaltyBox) {
+                                    const penSpotX = atkTeam === 'home' ? 88.5 : 11.5;
+                                    triggerSetPiece('penalty', atkTeam, penSpotX, 50);
+                                } else {
+                                    triggerSetPiece('freekick', atkTeam, foulX, foulY);
                                 }
                                 updateMatchStatsUI();
                             } else {
@@ -3060,6 +3460,9 @@
 
         function drawPitchFrame() {
             if (!pitchCanvas || !pitchCtx) return;
+            if (pitchCanvas.width === 0 || pitchCanvas.height === 0) {
+                resizePitchCanvas();
+            }
             const w = pitchCanvas.width;
             const h = pitchCanvas.height;
             if (!w || !h) return;
@@ -3107,6 +3510,21 @@
             pitchCtx.strokeRect(padX + fw - penW, (h - penH) / 2, penW, penH);
             pitchCtx.strokeRect(padX, (h - sixH) / 2, sixW, sixH);
             pitchCtx.strokeRect(padX + fw - sixW, (h - sixH) / 2, sixW, sixH);
+
+            const spotR = Math.max(2, w * 0.003);
+            pitchCtx.fillStyle = 'rgba(255, 255, 255, 0.85)';
+            pitchCtx.beginPath();
+            pitchCtx.arc(padX + fw * 0.115, h / 2, spotR, 0, Math.PI * 2);
+            pitchCtx.fill();
+            pitchCtx.beginPath();
+            pitchCtx.arc(padX + fw * 0.885, h / 2, spotR, 0, Math.PI * 2);
+            pitchCtx.fill();
+
+            const cornerR = Math.max(6, fw * 0.014);
+            pitchCtx.beginPath(); pitchCtx.arc(padX, padY, cornerR, 0, Math.PI * 0.5); pitchCtx.stroke();
+            pitchCtx.beginPath(); pitchCtx.arc(padX + fw, padY, cornerR, Math.PI * 0.5, Math.PI); pitchCtx.stroke();
+            pitchCtx.beginPath(); pitchCtx.arc(padX, padY + fh, cornerR, Math.PI * 1.5, Math.PI * 2); pitchCtx.stroke();
+            pitchCtx.beginPath(); pitchCtx.arc(padX + fw, padY + fh, cornerR, Math.PI, Math.PI * 1.5); pitchCtx.stroke();
 
             pitchCtx.fillStyle = 'rgba(255, 255, 255, 0.16)';
             pitchCtx.fillRect(padX - goalW, (h - goalH) / 2, goalW, goalH);
@@ -3199,6 +3617,18 @@
                 pitchCtx.textBaseline = 'middle';
                 pitchCtx.fillText(String(p.num), px, py);
 
+                if (p.yellow) {
+                    const cardW = Math.max(5, radius * 0.48);
+                    const cardH = Math.max(7, radius * 0.68);
+                    const cardX = px + radius * 0.62;
+                    const cardY = py - radius * 1.05;
+                    pitchCtx.fillStyle = '#facc15';
+                    pitchCtx.fillRect(cardX, cardY, cardW, cardH);
+                    pitchCtx.strokeStyle = '#0f172a';
+                    pitchCtx.lineWidth = 1;
+                    pitchCtx.strokeRect(cardX, cardY, cardW, cardH);
+                }
+
                 if (matchState.showAiOverlay) {
                     pitchCtx.fillStyle = 'rgba(2, 6, 23, 0.82)';
                     pitchCtx.fillRect(px - 24, py - radius - 13, 48, 11);
@@ -3212,6 +3642,17 @@
             const bx = padX + (b.x / 100) * fw;
             const by = padY + (b.y / 100) * fh;
             const br = Math.max(4.5, radius * 0.52);
+
+            if (matchState.setPiece) {
+                pitchCtx.save();
+                pitchCtx.beginPath();
+                pitchCtx.arc(bx, by, br * 2.5, 0, Math.PI * 2);
+                pitchCtx.strokeStyle = '#facc15';
+                pitchCtx.lineWidth = 2;
+                pitchCtx.setLineDash([4, 3]);
+                pitchCtx.stroke();
+                pitchCtx.restore();
+            }
 
             pitchCtx.beginPath();
             pitchCtx.arc(bx + b.z * 2, by + b.z * 3 + 2, br * 0.9, 0, Math.PI * 2);
@@ -3229,11 +3670,16 @@
 
         let lastAnimTs = 0;
         function mainAnimationLoop(ts) {
-            const dt = lastAnimTs ? Math.min(0.05, (ts - lastAnimTs) / 1000) : 0.016;
-            lastAnimTs = ts;
-            if (matchState.active && !matchState.finished) {
-                stepMatchSimulation(dt);
-                drawPitchFrame();
+            try {
+                const dt = lastAnimTs ? Math.min(0.05, (ts - lastAnimTs) / 1000) : 0.016;
+                lastAnimTs = ts;
+                if (matchState.active && !matchState.finished) {
+                    stepMatchSimulation(dt);
+                    drawPitchFrame();
+                }
+            } catch (err) {
+                console.error('Error pada loop pertandingan:', err);
+                matchState.active = false;
             }
             requestAnimationFrame(mainAnimationLoop);
         }
@@ -3500,9 +3946,14 @@
         }
 
         function buildTournamentBracket(tourneyId) {
-            const allClubs = Object.values(gameState.clubs);
-            const others = allClubs.filter(c => c.id !== gameState.club.id).sort(() => Math.random() - 0.5).slice(0, 7);
-            const pool = [gameState.club, ...others].sort(() => Math.random() - 0.5);
+            const allClubs = Object.values(gameState.clubs || {});
+            const others = allClubs.filter(c => c && c.id !== gameState.club.id).sort(() => Math.random() - 0.5).slice(0, 7);
+            const pool = [gameState.club, ...others];
+            while (pool.length < 8) {
+                const fallbackClub = RAW_CLUBS[pool.length % RAW_CLUBS.length];
+                pool.push({ ...fallbackClub, id: `${fallbackClub.id}_dup_${pool.length}` });
+            }
+            pool.sort(() => Math.random() - 0.5);
             const qf = [];
             for (let i = 0; i < 8; i += 2) {
                 qf.push({ home: pool[i], away: pool[i + 1], homeScore: null, awayScore: null, winner: null });
@@ -4107,8 +4558,9 @@
             ensureShopPersistence();
             const sku = payload && payload.sku;
             const nowTs = Date.now();
-            const txDedupKey = `${sku || ''}_${payload && payload.txId ? payload.txId : ''}`;
-            if (sku && lastHandledTxKey.startsWith(sku + '_') && (nowTs - lastHandledTxTs) < 1500) {
+            const incomingTxId = payload && payload.txId ? String(payload.txId) : '';
+            const txDedupKey = `${sku || ''}_${incomingTxId}`;
+            if (incomingTxId && lastHandledTxKey === txDedupKey && (nowTs - lastHandledTxTs) < 800) {
                 return;
             }
             lastHandledTxKey = txDedupKey;
@@ -4136,6 +4588,7 @@
             if (rewards.vipPass) {
                 gameState.shop.vipPassActive = true;
                 summaryParts.push('Pas VIP Aktif');
+                PortalSDK.unlockAchievement('msn_vip_manager', 'Manajer VIP Nusantara', 'Mengaktifkan Pas Musim Manajer VIP dari Toko Portal.');
             }
             if (rewards.tokenShape) {
                 if (!gameState.shop.ownedTokenShapes.includes(rewards.tokenShape)) {
@@ -4146,9 +4599,13 @@
                 if (matchState.homeClub) matchState.homeClub.tokenShape = rewards.tokenShape;
                 drawPitchFrame();
                 summaryParts.push(`Model Token ${TOKEN_SHAPE_LABELS[rewards.tokenShape] || rewards.tokenShape} (Tersedia di Identitas Klub)`);
+                PortalSDK.unlockAchievement('msn_custom_token_' + rewards.tokenShape, 'Kolektor Token Taktis', `Membuka kosmetik bidak lapangan ${TOKEN_SHAPE_LABELS[rewards.tokenShape] || rewards.tokenShape}.`);
             }
             if (item && item.oneTime && !gameState.shop.claimedOneTime.includes(item.sku)) {
                 gameState.shop.claimedOneTime.push(item.sku);
+            }
+            if (item && item.sku === 'bonus_portal_starter') {
+                PortalSDK.unlockAchievement('msn_portal_starter', 'Pendatang Baru Portal', 'Mengklaim Bonus Selamat Datang dari Portal GameZone ID.');
             }
             gameState.shop.purchaseHistory.unshift({
                 sku: sku || 'portal_item',
@@ -4161,7 +4618,7 @@
             updateUIHeader();
             renderDashboard();
             renderShopTab();
-            saveGameData(false);
+            saveGameData(false, 'portal_shop_purchase');
             playGoalSound();
             showToast(`Dibeli: ${summaryParts.join(', ')}`, 'success');
         }
@@ -4284,16 +4741,35 @@
             if (!file) return;
             const reader = new FileReader();
             reader.onload = (ev) => {
-                pendingCustomEmblem[target] = ev.target.result;
-                if (target === 'settings') {
-                    gameState.club.customEmblem = ev.target.result;
-                    updateSettingsEmblemPreview();
-                } else if (target === 'existing') {
-                    updateExistingEmblemPreview();
-                } else if (target === 'scratch') {
-                    updateScratchPreview();
-                }
-                showToast('Emblem kustom berhasil dimuat!', 'success');
+                const img = new Image();
+                img.onload = () => {
+                    const maxDim = 160;
+                    const scale = Math.min(1, maxDim / Math.max(img.width || 1, img.height || 1));
+                    const canvas = document.createElement('canvas');
+                    canvas.width = Math.max(1, Math.round(img.width * scale));
+                    canvas.height = Math.max(1, Math.round(img.height * scale));
+                    const ctx = canvas.getContext('2d');
+                    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+                    const optimizedDataUrl = canvas.toDataURL('image/webp', 0.82);
+
+                    pendingCustomEmblem[target] = optimizedDataUrl;
+                    if (target === 'settings') {
+                        gameState.club.customEmblem = optimizedDataUrl;
+                        if (gameState.clubs[gameState.club.id]) {
+                            gameState.clubs[gameState.club.id].customEmblem = optimizedDataUrl;
+                        }
+                        updateSettingsEmblemPreview();
+                        updateUIHeader();
+                        renderDashboard();
+                        saveGameData(false, 'custom_emblem_upload');
+                    } else if (target === 'existing') {
+                        updateExistingEmblemPreview();
+                    } else if (target === 'scratch') {
+                        updateScratchPreview();
+                    }
+                    showToast('Emblem kustom diunggah & langsung disinkronkan ke Portal!', 'success');
+                };
+                img.src = ev.target.result;
             };
             reader.readAsDataURL(file);
         }
@@ -4302,7 +4778,13 @@
             pendingCustomEmblem[target] = null;
             if (target === 'settings') {
                 gameState.club.customEmblem = null;
+                if (gameState.clubs[gameState.club.id]) {
+                    gameState.clubs[gameState.club.id].customEmblem = null;
+                }
                 updateSettingsEmblemPreview();
+                updateUIHeader();
+                renderDashboard();
+                saveGameData(false, 'custom_emblem_reset');
             } else if (target === 'existing') {
                 updateExistingEmblemPreview();
             } else if (target === 'scratch') {
@@ -4381,7 +4863,7 @@
             drawPitchFrame();
             updateUIHeader();
             renderDashboard();
-            saveGameData(true);
+            saveGameData(true, 'club_identity_save');
         }
 
         function openCareerModal(isFirstTime = false) {
@@ -4473,10 +4955,10 @@
             });
             ensureTournamentsInitialized();
             refreshTransferMarket(true);
-            saveGameData(false);
+            saveGameData(false, 'career_takeover_club');
             closeCareerModal();
             renderAllUI();
-            showToast(`Selamat datang di ${gameState.club.name}!`, 'success');
+            showToast(`Selamat datang di ${gameState.club.name}! Tersinkron ke Portal.`, 'success');
         }
 
         function startScratchClubCareer() {
@@ -4495,10 +4977,10 @@
             });
             ensureTournamentsInitialized();
             refreshTransferMarket(true);
-            saveGameData(false);
+            saveGameData(false, 'career_scratch_club');
             closeCareerModal();
             renderAllUI();
-            showToast(`Klub baru ${gameState.club.name} resmi berdiri!`, 'success');
+            showToast(`Klub baru ${gameState.club.name} resmi berdiri & tersinkron ke Portal!`, 'success');
         }
 
         /* ===================================================
@@ -4530,15 +5012,24 @@
         }
 
         window.addEventListener('DOMContentLoaded', () => {
-            PortalSDK.init();
-            registerAllShopItemsToPortal(true);
-            const hadSave = loadGameData();
-            ensureEconomyState();
-            ensureTournamentsInitialized();
-            renderAllUI();
-            requestAnimationFrame(mainAnimationLoop);
-            if (!hadSave) {
-                openCareerModal(true);
+            try {
+                PortalSDK.init();
+                registerAllShopItemsToPortal(true);
+                const hadSave = loadGameData();
+                ensureEconomyState();
+                ensureTournamentsInitialized();
+                renderAllUI();
+                requestAnimationFrame(mainAnimationLoop);
+                if (!hadSave) {
+                    openCareerModal(true);
+                }
+            } catch (err) {
+                console.error('Gagal inisialisasi awal, memulihkan ke kondisi standar:', err);
+                gameState = createDefaultState('persija');
+                ensureEconomyState();
+                ensureTournamentsInitialized();
+                renderAllUI();
+                requestAnimationFrame(mainAnimationLoop);
             }
         });
     </script>
